@@ -1,0 +1,508 @@
+---
+title: "P622-2 10X fixed data on CR called cells: QC and analysis"
+output: html_document
+author: Naresh Doni Jayavelu
+---
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+## Load all necessary libraries, although I do not like to.
+
+```{r loadLibraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(Seurat)
+library(stringr)
+library(ggpubr)
+library(gridExtra)
+library(car)
+library(lme4)
+# library(garnett)
+library(ggrepel)
+library(ggrastr)
+library(dplyr)
+library(tidyverse)
+library(presto)
+library(kableExtra)
+library(patchwork)
+library(ggbeeswarm)
+# library(rlang)
+library(ggrastr)
+# library(BPCells)
+library(igraph)
+library(ggraph)
+library(RColorBrewer)
+library(scales)
+library(ComplexUpset)
+
+options(stringsAsFactors = FALSE)
+set.seed(100)
+
+Csparse_validate = "CsparseMatrix_validate"
+
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### Set up the directories
+```{r set_up_directories, cache = TRUE}
+# baseDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+# baseDir_isilon <- "/nfs/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+baseDir <- "/nfs/pure_bioinformatics/workspace/ndonijayavelu/P622_analysis_pure_server"
+# annoExtDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/Annotation_files"
+outDir <- file.path(baseDir, "output")
+dataDir <- file.path(baseDir, "data")
+processedDataDir <- file.path(baseDir, "processed_data")
+# tabDir <- file.path(outDir, "scanpy_related", "Tables")
+# scanpyDir <- file.path(outDir, "scanpy_related", "without_T176")
+# scanpyDir_isilon <- file.path(baseDir_isilon, "output", "scanpy_related", "without_T176")
+# degDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list")
+# figDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list", "Figures")
+# degDir <- file.path(baseDir, "code/without_T176/PseudoBulk_analysis/4_conditions")
+# enrichRDir <- file.path(baseDir, "enrichR_database")
+# enrichDir <- file.path(baseDir, "code/without_T176/PseudoBulk_DEGs_enrichments")
+# figDir <- file.path(baseDir, "code/without_T176/Figs_AAAAI_Feb2026/T2_signature_vs_cellComp")
+
+```
+
+
+### Define color codes
+```{r set_up_directories, cache = TRUE}
+
+col_sel_cell <- c("Basal" = "#DDCBA4FF", "MitoticBasal" = "#D99E4CFF", 
+             "SupraBasal" = "#BE3428FF", "Secretory" = "#95C65CFF", 
+             "Club" = "#088BBEFF", "Goblet" = "#F28A8AFF", 
+             "MucousSecretory" = "#0E7175FF","MucousCiliated" = "#94D0FFFF", 
+             "Deuterosomal" = "#FFB900FF", "Ciliated" = "#8795E8FF", 
+             "RareCells" = "#C774E8FF")
+
+
+col_sel_donor <- c(Healthy = "darkgrey", "Non-T2" = "#5773CCFF", "T2" = "#FFB900FF")
+
+col_sel_condition <- c("Uninfected" = "#66C2A5", "RV16" = "#FC8D62", "IL-13" = "#8DA0CB", "IL-13_RV16" = "#E78AC3")
+
+cell_type_levels = c("Basal", "MitoticBasal", "SupraBasal", "Secretory", 
+                       "Club", "Goblet", "MucousSecretory", "MucousCiliated", 
+                       "Deuterosomal", "Ciliated", "RareCells")
+condition_levels <- c("Uninfected", "RV16", "IL-13", "IL-13_RV16")
+
+```
+
+
+### Analysis on Cell Rangers filtered matrix data 
+
+```{r Read the marker genes list}
+
+# dataDirs
+rawdataDirs <- c(
+  "/nfs/pure_bioinformatics/pipeline/Illumina/260218_VH00126_450_222HCHWNX/Project_P622-3Processed_bri_260220/pool622-3_1/outs/per_sample_outs")
+
+# Read in samples individually and combine file names
+file_names_h5_filtered <- unlist(lapply(rawdataDirs, function(dir) {
+  list.files(
+    dir,
+    full.names = TRUE,
+    recursive = TRUE,
+    pattern = "sample_filtered_feature_bc_matrix.h5"
+  )
+}))
+
+# extract sample names from file paths
+sampleList <- str_extract(file_names_h5_filtered, "(?<=per_sample_outs/[/]?)[^/]+")
+
+# read expression data
+gexObjectsList <- lapply(file_names_h5_filtered, Read10X_h5)
+names(gexObjectsList) <- sampleList
+
+lapply(gexObjectsList, dim)
+
+seuratObjectsList <- vector("list", length = length(sampleList))
+for (k in 1:length(sampleList)){
+  seuratObjectsList[[k]] <- CreateSeuratObject(counts = gexObjectsList[[k]], 
+                                               min.features = 0, 
+                                               min.cells = 0,
+                                               project = sampleList[k])
+}
+
+# add QC metrics
+for(k in 1:length(seuratObjectsList)){
+  seurat_obj <- seuratObjectsList[[k]]
+  seurat_obj[["Percent_MT"]] <- PercentageFeatureSet(seurat_obj, pattern = "^MT-")
+  seurat_obj[["Percent_RIBO"]] <- PercentageFeatureSet(seurat_obj, pattern = "^RP[SL]")
+  seurat_obj[["Percent_HB"]] <- PercentageFeatureSet(seurat_obj, pattern = "^HB[^P]")
+  seuratObjectsList[[k]] <- seurat_obj
+}
+
+# merge samples
+merged_seurat_obj_CR_cells <- merge(x = seuratObjectsList[[1]], 
+                      y = seuratObjectsList[2:length(seuratObjectsList)], 
+                      add.cell.ids = sampleList)
+
+# make sure merged seurat object is same as individual objects
+all(sum(sapply(seuratObjectsList, function(x) dim(x)[2])) == dim(merged_seurat_obj_CR_cells)[2])
+
+
+# save as an .rds object
+# saveRDS(merged_seurat_obj_CR_cells, file = file.path(processedDataDir, "merged_seurat_obj_CR_cells.rds"))
+# merged_seurat_obj_CR_cells <- readRDS(file = file.path(processedDataDir, "merged_seurat_obj_CR_cells.rds"))
+
+
+```
+
+
+&nbsp;
+
+### QC stats and plots before filtering
+
+```{r QC stats and plots before filtering}
+
+# Extract metadata
+metadata_beforeQC <- merged_seurat_obj_CR_cells@meta.data
+
+# Calculate QC metrics
+beforeQC_metrics <- metadata_beforeQC %>%
+  dplyr::group_by(orig.ident) %>% # Group by sample identifier
+  dplyr::summarise(
+    num_cells = n(),                          # Number of cells
+    # median_RVA_counts = median(RVA_counts),
+    # min_RVA_counts = min(RVA_counts),
+    # max_RVA_counts = max(RVA_counts),
+    median_UMIs = median(nCount_RNA), # Median UMIs per cell
+    median_genes = median(nFeature_RNA), # Median genes per cell
+    median_MT = median(Percent_MT)
+    # min_genes = min(nFeature_RNA), # Min genes per cell
+    # max_genes = max(nFeature_RNA) # Min genes per cell
+  )
+
+
+beforeQC_metrics %>% mutate_if(is.numeric, round, 1) %>%
+  kbl() %>% kable_paper("hover", full_width = F, bootstrap_options = "condensed", font_size = 12)
+
+
+# QC plots
+
+generate_histogram_plot <- function(metadata, feature, bins = 50) {
+  # Validate input
+  if (!feature %in% colnames(metadata)) {
+    stop(sprintf("The feature '%s' is not a column in the provided metadata.", feature))
+  }
+  
+  # Calculate median values for the feature by group
+  temp_data <- metadata %>%
+    group_by(orig.ident) %>%
+    summarise(median_number = median(.data[[feature]], na.rm = TRUE))
+  
+  # Generate plot
+  temp_plot <- metadata %>%
+    ggplot(aes(x = .data[[feature]])) +
+    geom_histogram(bins = bins, color = "black", alpha = 0.7) + # Add histogram
+    facet_wrap(~orig.ident, nrow = 4, scales = "free") + # Facet by sample
+    geom_vline(data = temp_data, aes(xintercept = median_number), linetype = "dashed", color = "red") + # Median line
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 90, size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title.x = element_text(size = 14),
+      axis.title.y = element_text(size = 14),
+      legend.text = element_text(size = 14),
+      legend.title = element_blank(),
+      legend.position = "none"
+    ) +
+    labs(
+      x = feature,
+      y = "Cell Count",
+      title = sprintf("%s Distribution Across Samples", feature)
+    )
+  
+  # Return the plot
+  return(temp_plot)
+}
+
+umi_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "nCount_RNA", 
+  bins = 50
+)
+
+gene_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "nFeature_RNA", 
+  bins = 50
+)
+
+mt_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "Percent_MT", 
+  bins = 50
+)
+
+ribo_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "Percent_RIBO", 
+  bins = 50
+)
+
+hb_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "Percent_HB", 
+  bins = 50
+)
+
+
+```
+
+&nbsp;
+
+### QC stats and plots after filtering
+
+```{r QC stats and plots after filtering}
+
+
+### Remove bad QC cells
+# remove bad QC cells
+
+quantile(metadata_beforeQC$nCount_RNA, probs = seq(0, 1, 0.01))
+quantile(metadata_beforeQC$nFeature_RNA, probs = seq(0, 1, 0.01))
+quantile(metadata_beforeQC$Percent_MT, probs = seq(0, 1, 0.01))
+
+qcMetricsThresholds <-
+  c(
+    "min_nFeature_RNA" = 100,
+    "max_nFeature_RNA" = 4000,
+    "max_nCount_RNA" = 20000,
+    "percent_mito" = 10
+  )
+
+
+seurat_obj <- merged_seurat_obj_CR_cells
+
+cellsAfterQCFilter <-
+  WhichCells(
+    seurat_obj,
+    expression = nFeature_RNA >= qcMetricsThresholds["min_nFeature_RNA"]) %>% 
+  # keeps 281 of 500
+  intersect(
+    WhichCells(
+      seurat_obj,
+      expression = nFeature_RNA <= qcMetricsThresholds["max_nFeature_RNA"])) %>% 
+  # keeps 279 of 281
+  intersect(
+    WhichCells(
+      seurat_obj, 
+      expression = Percent_MT <= qcMetricsThresholds["percent_mito"])) %>%
+  # keeps 255 of 281
+  intersect(
+    WhichCells(
+      seurat_obj,
+      expression = nCount_RNA <= qcMetricsThresholds["max_nCount_RNA"]))
+
+
+# Filter bad/low quality cells
+seurat_obj_filtered <- subset(seurat_obj, cells = cellsAfterQCFilter)
+seurat_obj_filtered
+
+
+# QC metrics
+
+# Extract metadata
+metadata_afterQC <- seurat_obj_filtered@meta.data
+
+
+# Calculate QC metrics
+afterQC_metrics <- metadata_afterQC %>%
+  dplyr::group_by(orig.ident) %>% # Group by sample identifier
+  dplyr::summarise(
+    num_cells = n(),                          # Number of cells
+    median_UMIs = median(nCount_RNA), # Median UMIs per cell
+    median_genes = median(nFeature_RNA), # Median genes per cell
+    median_MT = median(Percent_MT), # Median genes per cell
+    
+  )
+
+
+afterQC_metrics %>% mutate_if(is.numeric, round, 1) %>%
+  kbl() %>% kable_paper("hover", full_width = F, bootstrap_options = "condensed", font_size = 12)
+
+# QC plots
+umi_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "nCount_RNA", 
+  bins = 50
+)
+
+gene_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "nFeature_RNA", 
+  bins = 50
+)
+
+mt_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "Percent_MT", 
+  bins = 50
+)
+
+ribo_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "Percent_RIBO", 
+  bins = 50
+)
+
+hb_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "Percent_HB", 
+  bins = 50
+)
+
+
+```
+
+
+&nbsp;
+
+### Normalization, Integration and Clustering 
+
+```{r Normalization Integration and Clustering }
+
+
+
+### Normalization and clustering 
+get_umap_metadata <- function(seurat_obj){
+  umap_df <- seurat_obj[["umap"]]@cell.embeddings %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "cell_id")
+  meta_df <- seurat_obj@meta.data %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "cell_id")
+  df <- umap_df %>% 
+    inner_join(meta_df)
+  return(df)
+}
+
+
+# normalization and clustering
+seurat_obj_filtered_unintegrated <- NormalizeData(seurat_obj_filtered)
+seurat_obj_filtered_unintegrated <- FindVariableFeatures(seurat_obj_filtered_unintegrated)
+seurat_obj_filtered_unintegrated <- ScaleData(seurat_obj_filtered_unintegrated)
+seurat_obj_filtered_unintegrated <- RunPCA(seurat_obj_filtered_unintegrated)
+
+seurat_obj_filtered_unintegrated <- FindNeighbors(seurat_obj_filtered_unintegrated, dims = 1:50)
+# seurat_obj_filtered_unintegrated <- FindClusters(seurat_obj_filtered_unintegrated, resolution = 0.6, cluster.name = "unintegrated_clusters")
+# seurat_obj_filtered_unintegrated <- FindClusters(seurat_obj_filtered_unintegrated, resolution = 0.5, cluster.name = "unintegrated_clusters_res0.5")
+# seurat_obj_filtered_unintegrated <- FindClusters(seurat_obj_filtered_unintegrated, resolution = 0.4, cluster.name = "unintegrated_clusters_res0.4")
+seurat_obj_filtered_unintegrated <- FindClusters(seurat_obj_filtered_unintegrated, resolution = 0.3, cluster.name = "unintegrated_clusters_res0.3")
+seurat_obj_filtered_unintegrated <- seurat_obj_filtered_unintegrated %>% RunUMAP(dims = 1:50)
+
+# Visualize umap
+DimPlot(seurat_obj_filtered_unintegrated, reduction = "umap", label = TRUE)
+DimPlot(seurat_obj_filtered_unintegrated, reduction = "umap", group.by = "orig.ident")
+pp <- DimPlot(seurat_obj_filtered_unintegrated, reduction = "umap", group.by = "orig.ident", split.by = "orig.ident", ncol = 8)
+
+
+# Custom function for DimPlot with user-defined rows and columns
+custom_UMAP_Plot <- function(seurat_obj, reduction = "umap", group_by = "orig.ident", split_by = "orig.ident", nrow = NULL, ncol = NULL) {
+  # Fetch UMAP embeddings and metadata
+  umap_df <- FetchData(seurat_obj, vars = c(paste0(reduction, "_1"), paste0(reduction, "_2"), group_by, split_by))
+  
+  # Rename columns for ggplot
+  colnames(umap_df)[1:2] <- c("UMAP_1", "UMAP_2")
+  
+  # Base ggplot
+  p <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2, color = !!sym(group_by))) +
+    geom_point(size = 0.5, alpha = 0.8) +
+    theme_bw() +
+    labs(title = paste("UMAP colored by", group_by)) +
+    theme(legend.position = "none")
+  
+  # Facet wrap if split_by is provided
+  if (!is.null(split_by)) {
+    p <- p + facet_wrap(as.formula(paste("~", split_by)), nrow = nrow, ncol = ncol)
+  }
+
+  return(p)
+}
+
+custom_UMAP_Plot(seurat_obj_filtered_unintegrated, nrow = 2, ncol = 14)
+
+# saveRDS(seurat_obj_filtered_unintegrated, file = file.path(processedDataDir, "seurat_obj_filtered_unintegrated_CR.rds"))
+
+load(file = file.path(processedDataDir, "seurat_obj_filtered_unintegrated_CR.rds"))
+
+seurat_obj_filtered_CCA <- seurat_obj_filtered_unintegrated
+
+
+
+# marker genes
+# re-join layers after integration
+seurat_obj_filtered_unintegrated[["RNA"]] <- JoinLayers(seurat_obj_filtered_unintegrated[["RNA"]])
+
+cluster_markers_unintegrated <- FindAllMarkers(seurat_obj_filtered_unintegrated)
+
+# save(cluster_markers_unintegrated, file = file.path(processedDataDir, "cluster_markers_unintegrated_v1_temp_250130.rda"))
+
+# load(file = file.path(outDir, "cluster_markers_unintegrated_v1_temp_250130.rda"))
+
+
+options(future.globals.maxSize = 30 * 1024^3) 
+
+ref_samples_list <- afterQC_metrics %>%
+  slice_max(order_by = num_cells, n = 10) %>%
+  pull(orig.ident)
+
+# 1. Get the names of all layers currently in the object
+layer_names <- Layers(seurat_obj_filtered_CCA, search = "counts")
+
+# 2. Clean the layer names (Seurat often prefixes them with 'counts.')
+# This step ensures the names match your afterQC_metrics exactly
+clean_layer_names <- gsub("counts.", "", layer_names)
+
+# 3. Find the numeric positions of your reference samples
+ref_indices <- which(clean_layer_names %in% ref_samples_list)
+
+seurat_obj_filtered_CCA_integrated <- IntegrateLayers(object = seurat_obj_filtered_CCA, reference = ref_indices, k.weight = 25, dims = 1:25, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca", verbose = FALSE)
+
+save(seurat_obj_filtered_CCA_integrated, file = file.path(processedDataDir, "seurat_obj_filtered_CCA_integrated_CR.rda"))
+
+# load(file = file.path(outDir, "eurat_obj_filtered_CCA_integrated_250212.rda"))
+
+
+# re-join layers after integration
+seurat_obj_filtered_CCA_integrated[["RNA"]] <- JoinLayers(seurat_obj_filtered_CCA_integrated[["RNA"]])
+
+seurat_obj_filtered_CCA_integrated <- FindNeighbors(seurat_obj_filtered_CCA_integrated, reduction = "integrated.cca", dims = 1:50)
+seurat_obj_filtered_CCA_integrated <- FindClusters(seurat_obj_filtered_CCA_integrated, resolution = 0.99)
+seurat_obj_filtered_CCA_integrated_temp <- FindClusters(seurat_obj_filtered_CCA_integrated, resolution = c(0.8, 0.9, 0.99, 1.1))
+seurat_obj_filtered_CCA_integrated <- RunUMAP(seurat_obj_filtered_CCA_integrated, reduction = "integrated.cca", dims = 1:50, reduction.name = "umap.cca")
+
+# save(seurat_obj_filtered_CCA_integrated, file = file.path(outDir, "seurat_obj_filtered_CCA_integrated_joined_layers_250212.rda"))
+# load(file = file.path(outDir, "seurat_obj_filtered_CCA_integrated_joined_layers_250212.rda"))
+table(seurat_obj_filtered_CCA_integrated@meta.data$seurat_clusters)
+
+DimPlot(seurat_obj_filtered_CCA_integrated, reduction = "umap.cca", group.by = "orig.ident", split.by = "orig.ident")
+DimPlot(seurat_obj_filtered_CCA_integrated, reduction = "umap.cca", label = TRUE)
+DimPlot(seurat_obj_filtered_CCA_integrated, reduction = "umap.cca", group.by = "orig.ident")
+
+
+```
+
+
+
+
+

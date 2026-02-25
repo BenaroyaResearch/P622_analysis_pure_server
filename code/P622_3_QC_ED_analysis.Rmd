@@ -1,0 +1,229 @@
+---
+title: "P622-2 10X fixed data on ED called cells: QC and analysis"
+output: html_document
+author: Naresh Doni Jayavelu
+---
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+## Load all necessary libraries, although I do not like to.
+
+```{r loadLibraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(Seurat)
+library(stringr)
+library(ggpubr)
+library(gridExtra)
+library(car)
+library(lme4)
+# library(garnett)
+library(ggrepel)
+library(ggrastr)
+library(dplyr)
+library(tidyverse)
+library(presto)
+library(kableExtra)
+library(patchwork)
+library(ggbeeswarm)
+# library(rlang)
+library(ggrastr)
+# library(BPCells)
+library(igraph)
+library(ggraph)
+library(RColorBrewer)
+library(scales)
+library(ComplexUpset)
+
+options(stringsAsFactors = FALSE)
+set.seed(100)
+
+Csparse_validate = "CsparseMatrix_validate"
+
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### Set up the directories
+```{r set_up_directories, cache = TRUE}
+# baseDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+# baseDir_isilon <- "/nfs/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+baseDir <- "/nfs/pure_bioinformatics/workspace/ndonijayavelu/P622_analysis_pure_server"
+# annoExtDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/Annotation_files"
+outDir <- file.path(baseDir, "output")
+dataDir <- file.path(baseDir, "data")
+processedDataDir <- file.path(baseDir, "processed_data")
+# tabDir <- file.path(outDir, "scanpy_related", "Tables")
+# scanpyDir <- file.path(outDir, "scanpy_related", "without_T176")
+# scanpyDir_isilon <- file.path(baseDir_isilon, "output", "scanpy_related", "without_T176")
+# degDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list")
+# figDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list", "Figures")
+# degDir <- file.path(baseDir, "code/without_T176/PseudoBulk_analysis/4_conditions")
+# enrichRDir <- file.path(baseDir, "enrichR_database")
+# enrichDir <- file.path(baseDir, "code/without_T176/PseudoBulk_DEGs_enrichments")
+# figDir <- file.path(baseDir, "code/without_T176/Figs_AAAAI_Feb2026/T2_signature_vs_cellComp")
+
+```
+
+
+### Define color codes
+```{r set_up_directories, cache = TRUE}
+
+col_sel_cell <- c("Basal" = "#DDCBA4FF", "MitoticBasal" = "#D99E4CFF", 
+             "SupraBasal" = "#BE3428FF", "Secretory" = "#95C65CFF", 
+             "Club" = "#088BBEFF", "Goblet" = "#F28A8AFF", 
+             "MucousSecretory" = "#0E7175FF","MucousCiliated" = "#94D0FFFF", 
+             "Deuterosomal" = "#FFB900FF", "Ciliated" = "#8795E8FF", 
+             "RareCells" = "#C774E8FF")
+
+
+col_sel_donor <- c(Healthy = "darkgrey", "Non-T2" = "#5773CCFF", "T2" = "#FFB900FF")
+
+col_sel_condition <- c("Uninfected" = "#66C2A5", "RV16" = "#FC8D62", "IL-13" = "#8DA0CB", "IL-13_RV16" = "#E78AC3")
+
+cell_type_levels = c("Basal", "MitoticBasal", "SupraBasal", "Secretory", 
+                       "Club", "Goblet", "MucousSecretory", "MucousCiliated", 
+                       "Deuterosomal", "Ciliated", "RareCells")
+condition_levels <- c("Uninfected", "RV16", "IL-13", "IL-13_RV16")
+
+```
+
+
+### Analysis on Cell Rangers filtered matrix data 
+
+```{r Read the marker genes list}
+
+# dataDirs
+rawdataDirs <- c(
+  "/nfs/pure_bioinformatics/pipeline/Illumina/260218_VH00126_450_222HCHWNX/Project_P622-3Processed_bri_260220/pool622-3_1/outs/per_sample_outs")
+
+# Read in samples individually and combine file names
+file_names_h5_filtered <- unlist(lapply(rawdataDirs, function(dir) {
+  list.files(
+    dir,
+    full.names = TRUE,
+    recursive = TRUE,
+    pattern = "sample_filtered_feature_bc_matrix.h5"
+  )
+}))
+
+# extract sample names from file paths
+sampleList <- str_extract(file_names_h5_filtered, "(?<=per_sample_outs/[/]?)[^/]+")
+
+# read expression data
+gexObjectsList <- lapply(file_names_h5_filtered, Read10X_h5)
+names(gexObjectsList) <- sampleList
+
+lapply(gexObjectsList, dim)
+
+seuratObjectsList <- vector("list", length = length(sampleList))
+for (k in 1:length(sampleList)){
+  seuratObjectsList[[k]] <- CreateSeuratObject(counts = gexObjectsList[[k]], 
+                                               min.features = 0, 
+                                               min.cells = 0,
+                                               project = sampleList[k])
+}
+
+# add QC metrics
+for(k in 1:length(seuratObjectsList)){
+  seurat_obj <- seuratObjectsList[[k]]
+  seurat_obj[["Percent_MT"]] <- PercentageFeatureSet(seurat_obj, pattern = "^MT-")
+  seurat_obj[["Percent_RIBO"]] <- PercentageFeatureSet(seurat_obj, pattern = "^RP[SL]")
+  seurat_obj[["Percent_HB"]] <- PercentageFeatureSet(seurat_obj, pattern = "^HB[^P]")
+  seuratObjectsList[[k]] <- seurat_obj
+}
+
+# merge samples
+merged_seurat_obj_CR_cells <- merge(x = seuratObjectsList[[1]], 
+                      y = seuratObjectsList[2:length(seuratObjectsList)], 
+                      add.cell.ids = sampleList)
+
+# make sure merged seurat object is same as individual objects
+all(sum(sapply(seuratObjectsList, function(x) dim(x)[2])) == dim(merged_seurat_obj_CR_cells)[2])
+
+
+# save as an .rds object
+# saveRDS(merged_seurat_obj_CR_cells, file = file.path(processedDataDir, "merged_seurat_obj_CR_cells.rds"))
+# merged_seurat_obj_CR_cells <- readRDS(file = file.path(processedDataDir, "merged_seurat_obj_CR_cells.rds"))
+
+merged_seurat_obj_CR_cells <- readRDS(file = file.path(processedDataDir, "merged_seurat_obj_CR_cells.rds"))
+
+
+# Extract metadata
+metadata_beforeQC_CR <- merged_seurat_obj_CR_cells@meta.data
+
+# Calculate QC metrics
+beforeQC_metrics_CR <- metadata_beforeQC_CR %>%
+  dplyr::group_by(orig.ident) %>% # Group by sample identifier
+  dplyr::summarise(
+    num_cells_beforeQC_CR = n(),                  # Number of cells
+    median_UMIs_beforeQC_CR = median(nCount_RNA), # Median UMIs per cell
+    median_genes_beforeQC_CR = median(nFeature_RNA), # Median genes per cell
+    median_MT_beforeQC_CR = median(Percent_MT),
+    min_genes_beforeQC_CR = min(nFeature_RNA), # Min genes per cell
+    max_genes_beforeQC_CR = max(nFeature_RNA) # Min genes per cell
+  )
+
+
+### Remove bad QC cells
+
+quantile(metadata_beforeQC_CR$nCount_RNA, probs = seq(0, 1, 0.01))
+quantile(metadata_beforeQC_CR$nFeature_RNA, probs = seq(0, 1, 0.01))
+quantile(metadata_beforeQC_CR$Percent_MT, probs = seq(0, 1, 0.01))
+
+qcMetricsThresholds <-
+  c(
+    "min_nFeature_RNA" = 100,
+    "max_nFeature_RNA" = 4000,
+    "max_nCount_RNA" = 20000,
+    "percent_mito" = 10
+  )
+
+
+seurat_obj <- merged_seurat_obj_CR_cells
+
+cellsAfterQCFilter <-
+  WhichCells(
+    seurat_obj,
+    expression = nFeature_RNA >= qcMetricsThresholds["min_nFeature_RNA"]) %>% 
+  # keeps 281 of 500
+  intersect(
+    WhichCells(
+      seurat_obj,
+      expression = nFeature_RNA <= qcMetricsThresholds["max_nFeature_RNA"])) %>% 
+  # keeps 279 of 281
+  intersect(
+    WhichCells(
+      seurat_obj, 
+      expression = Percent_MT <= qcMetricsThresholds["percent_mito"])) %>%
+  # keeps 255 of 281
+  intersect(
+    WhichCells(
+      seurat_obj,
+      expression = nCount_RNA <= qcMetricsThresholds["max_nCount_RNA"]))
+
+
+# Filter bad/low quality cells
+seurat_obj_filtered <- subset(seurat_obj, cells = cellsAfterQCFilter)
+
+
+```
+
+

@@ -1,0 +1,283 @@
+---
+title: "P622-2 10X fixed data: Empty Drops cell calling"
+output: html_document
+author: Naresh Doni Jayavelu
+---
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+## Load all necessary libraries, although I do not like to.
+
+```{r loadLibraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(Seurat)
+library(DropletUtils)
+library(stringr)
+library(ggpubr)
+library(gridExtra)
+library(car)
+library(lme4)
+# library(garnett)
+library(ggrepel)
+library(ggrastr)
+library(dplyr)
+library(tidyverse)
+library(presto)
+library(kableExtra)
+library(patchwork)
+library(ggbeeswarm)
+# library(rlang)
+library(ggrastr)
+# library(BPCells)
+library(igraph)
+library(ggraph)
+library(RColorBrewer)
+library(scales)
+library(ComplexUpset)
+
+options(stringsAsFactors = FALSE)
+set.seed(100)
+
+Csparse_validate = "CsparseMatrix_validate"
+
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### Set up the directories
+```{r set_up_directories, cache = TRUE}
+# baseDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+# baseDir_isilon <- "/nfs/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+baseDir <- "/nfs/pure_bioinformatics/workspace/ndonijayavelu/P622_analysis_pure_server"
+# annoExtDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/Annotation_files"
+outDir <- file.path(baseDir, "output")
+dataDir <- file.path(baseDir, "data")
+processedDataDir <- file.path(baseDir, "processed_data")
+# tabDir <- file.path(outDir, "scanpy_related", "Tables")
+# scanpyDir <- file.path(outDir, "scanpy_related", "without_T176")
+# scanpyDir_isilon <- file.path(baseDir_isilon, "output", "scanpy_related", "without_T176")
+# degDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list")
+# figDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list", "Figures")
+# degDir <- file.path(baseDir, "code/without_T176/PseudoBulk_analysis/4_conditions")
+# enrichRDir <- file.path(baseDir, "enrichR_database")
+# enrichDir <- file.path(baseDir, "code/without_T176/PseudoBulk_DEGs_enrichments")
+# figDir <- file.path(baseDir, "code/without_T176/Figs_AAAAI_Feb2026/T2_signature_vs_cellComp")
+
+```
+
+
+### Define color codes
+```{r set_up_directories, cache = TRUE}
+
+col_sel_cell <- c("Basal" = "#DDCBA4FF", "MitoticBasal" = "#D99E4CFF", 
+             "SupraBasal" = "#BE3428FF", "Secretory" = "#95C65CFF", 
+             "Club" = "#088BBEFF", "Goblet" = "#F28A8AFF", 
+             "MucousSecretory" = "#0E7175FF","MucousCiliated" = "#94D0FFFF", 
+             "Deuterosomal" = "#FFB900FF", "Ciliated" = "#8795E8FF", 
+             "RareCells" = "#C774E8FF")
+
+
+col_sel_donor <- c(Healthy = "darkgrey", "Non-T2" = "#5773CCFF", "T2" = "#FFB900FF")
+
+col_sel_condition <- c("Uninfected" = "#66C2A5", "RV16" = "#FC8D62", "IL-13" = "#8DA0CB", "IL-13_RV16" = "#E78AC3")
+
+cell_type_levels = c("Basal", "MitoticBasal", "SupraBasal", "Secretory", 
+                       "Club", "Goblet", "MucousSecretory", "MucousCiliated", 
+                       "Deuterosomal", "Ciliated", "RareCells")
+condition_levels <- c("Uninfected", "RV16", "IL-13", "IL-13_RV16")
+
+```
+
+
+We would like to recover a lot of cells with low UMI counts assuming that those cells represent neutrophils and eosinophils (granulocyte cell populations). So starting with unfiltered matrices from cell ranger's output.
+
+
+### Read raw unfiltered matrix data 
+
+```{r Read the marker genes list}
+
+# dataDirs
+rawdataDirs <- c(
+  "/nfs/pure_bioinformatics/pipeline/Illumina/260218_VH00126_450_222HCHWNX/Project_P622-3Processed_bri_260220/pool622-3_1/outs/per_sample_outs")
+
+# Read in samples individually and combine file names
+file_names_h5_unfiltered <- unlist(lapply(rawdataDirs, function(dir) {
+  list.files(
+    dir,
+    full.names = TRUE,
+    recursive = TRUE,
+    pattern = "sample_raw_feature_bc_matrix.h5"
+  )
+}))
+
+# Read in samples individually and combine file names
+file_names_h5_filtered <- unlist(lapply(rawdataDirs, function(dir) {
+  list.files(
+    dir,
+    full.names = TRUE,
+    recursive = TRUE,
+    pattern = "sample_filtered_feature_bc_matrix.h5"
+  )
+}))[1]
+
+# extract sample names from file paths
+sampleList <- str_extract(file_names_h5_unfiltered, "(?<=per_sample_outs/[/]?)[^/]+")
+
+# read expression data
+gexObjectsList <- lapply(file_names_h5_unfiltered, Read10X_h5)
+names(gexObjectsList) <- sampleList
+
+lapply(gexObjectsList, dim)
+
+gexObject_filtered <- lapply(file_names_h5_filtered, Read10X_h5)
+
+
+# Identify MT and ribosomal genes - same across all Flex V2 samples
+MT_RB_genes <- rownames(gexObjectsList[[1]])[grepl("^MT-|^RP[SL]", rownames(gexObjectsList[[1]]))]
+genes_to_keep <- setdiff(rownames(gexObjectsList[[1]]), MT_RB_genes)
+
+gexObjectsListFiltered <- vector("list", length = length(sampleList))
+for (k in 1:length(sampleList)){
+  counts <- gexObjectsList[[k]]
+  # Remove MT and ribosomal genes
+  gexObjectsListFiltered[[k]] <- counts[genes_to_keep, ]
+}
+
+
+```
+
+### Run empty drops on raw unfiltered data
+
+```{r Read the marker genes list}
+#######################################################
+### Dated 260224
+# Run empty drops on various parameter combinations
+
+# This function removes the cellbc's with P-values = NA so that we can save memory 
+emptyDropsParamComb_v2 <- function(gexObject = gexObjectsList[[3]], 
+                                lower = c(10, 20, 25, 30), 
+                                retain = c(200, 300, 400, 500), 
+                                niters = c(10000),
+                                ignore = c(20),
+                                no_cores = 20){
+  paramComb <- expand.grid(lower = lower, retain = retain, niters = niters, ignore = ignore)
+  df <- NULL
+  for(k in 1:nrow(paramComb)){
+    e.out <- emptyDrops(gexObject, 
+                        lower = paramComb[k,]$lower, 
+                        retain = paramComb[k,]$retain, 
+                        ignore = paramComb[k,]$ignore, 
+                        niters = paramComb[k,]$niters, 
+                        BPPARAM = BiocParallel::MulticoreParam(workers = no_cores))
+    e.out.df <- e.out %>% as.data.frame() %>%
+      mutate(lower = paramComb[k,]$lower, 
+             retain = paramComb[k,]$retain, 
+             ignore = paramComb[k,]$ignore, 
+             niters = paramComb[k,]$niters,) %>%
+      tibble::rownames_to_column(var = "cellbc")
+    # remove cellbs's with P-values = NA
+    e.out.df <- e.out.df %>% 
+      tidyr::drop_na()
+    df <- rbind(df, e.out.df)
+    
+  }
+  return(df)
+}
+
+
+# test on one sample
+# df <- emptyDropsParamComb_v2(gexObject = gexObjectsListFiltered[[1]],
+#                                 lower = c(50),
+#                                 retain = c(200),
+#                                 niters = c(10000),
+#                                 ignore = c(20),
+#                                 no_cores = 20)
+
+set.seed(100)
+df_all <- NULL
+for(n in 1:length(gexObjectsList)){
+  df_n <- emptyDropsParamComb_v2(gexObject = gexObjectsList[[n]], 
+                                lower = c(40, 50, 100), 
+                                retain = c(100, 150, 200, 300), 
+                                niters = c(10000),
+                                ignore = c(20),
+                                no_cores = 20)
+  df_n <- df_n %>% mutate(sample_name = sampleList[n])
+  df_all <- rbind(df_all, df_n)
+}
+
+P622_3_df_all_emptyDrops_out <- df_all
+# save(P622_3_df_all_emptyDrops_out, file = file.path(processedDataDir, "P622_3_emptyDrops_out_32_samples.rda"))
+
+
+```
+
+### Summary and visualization
+
+```{r Read the marker genes list}
+
+df_all_fdr001 <- P622_3_df_all_emptyDrops_out %>%
+  filter(FDR < 0.001) %>%
+  group_by(sample_name, lower, retain, ignore, niters) %>%
+  summarise(count = n(),
+            median_UMI_count = median(Total),
+            min_UMI_count = min(Total),
+            max_UMI_count = max(Total)) %>%
+  mutate(ignore = factor(ignore))
+
+tt <- df_all_fdr001 %>%
+  filter(lower == 100 & retain == 300)
+
+sum(tt$count)
+
+# plot number of cells by parameter combination
+
+data_temp <- df_all_fdr001 %>%
+  filter(sample_name %in% c("NL_02-06-0014-7", "NL_02-06-0039-1", "NL_02-06-0048-1", "NL_02-06-0063-1"))
+
+
+temp_plot <-  data_temp %>%
+  filter(sample_name %in% c("NL_02-06-0014-7")) %>%
+  ggplot(aes(x = retain, y = count)) +
+  geom_point(aes(size = median_UMI_count, color = ignore)) + theme_bw() +
+  theme(plot.title = element_text(size = 12, face = "bold")) +
+  xlab("Retain UMI cutoff") + ylab("Total number of cells") +
+  facet_grid(rows = vars(sample_name), cols = vars(lower))
+  # ggtitle("QC: Aligned Counts") + 
+  #geom_hline(yintercept = 0.5, linetype = "dashed", color = "red") #+
+  # add median line
+  # geom_hline(yintercept = median(df1$alignedCounts))
+
+temp_plot
+
+
+# Summarize the most stable combination across all samples
+df_all_fdr001 %>%
+  group_by(lower, retain) %>%
+  summarise(
+    mean_count = mean(count),
+    sd_count = sd(count),
+    cv = sd(count) / mean(count)
+  ) %>%
+  arrange(cv)
+
+```
+
