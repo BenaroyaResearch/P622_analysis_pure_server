@@ -287,23 +287,6 @@ gtsave_extra(overlap_summary_table, filename = file.path(outDir, "overlap_summar
 
 ```
 
-
-### Alluvial plots
-
-```{r Read the marker genes list}
-
-
-
-```
-
-
-### Read ED called cells information
-
-```{r Read the marker genes list}
-
-```
-
-
 ### Alluvial plots
 
 ```{r Read the marker genes list}
@@ -459,6 +442,123 @@ tb <- sankey_data %>%
     row.striping.include_table_body = TRUE,
     row.striping.background_color   = "#F9F9F9"
   )
+
+
+```
+
+
+### Cell composition
+
+```{r Read the marker genes list}
+
+library(ggplot2)
+library(dplyr)
+
+# Prepare composition data for both methods
+composition_data <- bind_rows(
+  cell_metadata_CR %>%
+    mutate(method = "CellRanger",
+           cell_type_short = celltype_abbrev[cell_type]),
+  cell_metadata_ED %>%
+    mutate(method = "EmptyDrops",
+           cell_type_short = celltype_abbrev[cell_type])
+) %>%
+  group_by(method, cell_type_short) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(method) %>%
+  mutate(pct = round(n / sum(n) * 100, 2)) %>%
+  ungroup() %>%
+  mutate(
+    method         = factor(method, levels = c("CellRanger", "EmptyDrops")),
+    cell_type_short = factor(cell_type_short, levels = names(celltype_colors))
+  )
+
+# Plot 1 — Stacked bar (proportions)
+p1 <- ggplot(composition_data,
+             aes(x    = method,
+                 y    = pct,
+                 fill = cell_type_short)) +
+  geom_bar(stat     = "identity",
+           width    = 0.6,
+           color    = "white",
+           linewidth = 0.3) +
+  geom_text(aes(label = ifelse(pct > 2, paste0(round(pct, 1), "%"), "")),
+            position = position_stack(vjust = 0.5),
+            size     = 3,
+            fontface = "bold",
+            color    = "white") +
+  scale_fill_manual(values = celltype_colors) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(title    = "Cell Type Composition: CellRanger vs EmptyDrops",
+       subtitle = paste0("CR: ", nrow(cell_metadata_CR), " cells | ",
+                         "ED: ", nrow(cell_metadata_ED), " cells"),
+       x        = NULL,
+       y        = "% of Total Cells",
+       fill     = "Cell Type") +
+  theme_minimal() +
+  theme(
+    plot.title        = element_text(hjust = 0.5, face = "bold", size = 14),
+    plot.subtitle     = element_text(hjust = 0.5, size = 11),
+    axis.text.x       = element_text(face = "bold", size = 12),
+    axis.text.y       = element_text(size = 10),
+    legend.position   = "right",
+    legend.title      = element_text(face = "bold"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank()
+  )
+
+# Plot 2 — Grouped bar (absolute counts)
+p2 <- ggplot(composition_data,
+             aes(x    = cell_type_short,
+                 y    = n,
+                 fill = method)) +
+  geom_bar(stat     = "identity",
+           position = "dodge",
+           width    = 0.7,
+           color    = "white") +
+  scale_fill_manual(values = c("CellRanger" = "#4D4D4DFF",
+                               "EmptyDrops" = "#2CA02CFF")) +
+  scale_y_continuous(expand   = c(0, 0),
+                     labels   = scales::comma) +
+  labs(title    = "Cell Type Counts: CellRanger vs EmptyDrops",
+       subtitle = paste0("CR: ", nrow(cell_metadata_CR), " cells | ",
+                         "ED: ", nrow(cell_metadata_ED), " cells"),
+       x        = "Cell Type",
+       y        = "Number of Cells",
+       fill     = "Method") +
+  theme_minimal() +
+  theme(
+    plot.title         = element_text(hjust = 0.5, face = "bold", size = 14),
+    plot.subtitle      = element_text(hjust = 0.5, size = 11),
+    axis.text.x        = element_text(angle = 45, hjust = 1, face = "bold", size = 11),
+    axis.text.y        = element_text(size = 10),
+    legend.position    = "right",
+    legend.title       = element_text(face = "bold"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank()
+  )
+
+# Save both
+ggsave(file.path(outDir, "composition_stacked_CR_vs_ED.png"),
+       plot   = p1,
+       width  = 8,
+       height = 8,
+       dpi    = 150)
+
+ggsave(file.path(outDir, "composition_grouped_CR_vs_ED.png"),
+       plot   = p2,
+       width  = 12,
+       height = 7,
+       dpi    = 150)
+
+
+```
+
+
+## Alluvial plots
+
+```{r Read the marker genes list}
+
 
 
 ```

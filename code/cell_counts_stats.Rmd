@@ -112,6 +112,10 @@ condition_levels <- c("Uninfected", "RV16", "IL-13", "IL-13_RV16")
 
 ```{r Read the marker genes list}
 
+CR_ED_qc_metrics <- read_csv(file = file.path(outDir, "CR_ED_qc_metrics_with_sample_metadata.csv"))
+
+CR_ED_qc_metrics_select <- CR_ED_qc_metrics %>%
+  select(pre_hyb_cell_count_total, cell_number_input_in_to_hyb, num_cells_beforeQC_CR, num_cells_beforeQC_ED)
 
 ```
 
