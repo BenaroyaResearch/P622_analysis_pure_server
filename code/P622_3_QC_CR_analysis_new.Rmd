@@ -1,5 +1,5 @@
 ---
-title: "P622-2 10X fixed data on CR called cells: QC and analysis"
+title: "P622-3 10X fixed data on CR called cells: QC and analysis"
 output: html_document
 author: Naresh Doni Jayavelu
 ---
@@ -443,7 +443,7 @@ custom_UMAP_Plot(seurat_obj_filtered_unintegrated, nrow = 2, ncol = 14)
 
 # saveRDS(seurat_obj_filtered_unintegrated, file = file.path(processedDataDir, "seurat_obj_filtered_unintegrated_CR.rds"))
 
-load(file = file.path(processedDataDir, "seurat_obj_filtered_unintegrated_CR.rds"))
+seurat_obj_filtered_unintegrated <- readRDS(file = file.path(processedDataDir, "seurat_obj_filtered_unintegrated_CR.rds"))
 
 seurat_obj_filtered_CCA <- seurat_obj_filtered_unintegrated
 
@@ -460,45 +460,322 @@ cluster_markers_unintegrated <- FindAllMarkers(seurat_obj_filtered_unintegrated)
 # load(file = file.path(outDir, "cluster_markers_unintegrated_v1_temp_250130.rda"))
 
 
-options(future.globals.maxSize = 30 * 1024^3) 
 
-ref_samples_list <- afterQC_metrics %>%
-  slice_max(order_by = num_cells, n = 10) %>%
-  pull(orig.ident)
 
-# 1. Get the names of all layers currently in the object
-layer_names <- Layers(seurat_obj_filtered_CCA, search = "counts")
 
-# 2. Clean the layer names (Seurat often prefixes them with 'counts.')
-# This step ensures the names match your afterQC_metrics exactly
-clean_layer_names <- gsub("counts.", "", layer_names)
 
-# 3. Find the numeric positions of your reference samples
-ref_indices <- which(clean_layer_names %in% ref_samples_list)
 
-seurat_obj_filtered_CCA_integrated <- IntegrateLayers(object = seurat_obj_filtered_CCA, reference = ref_indices, k.weight = 25, dims = 1:25, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca", verbose = FALSE)
+```
 
-save(seurat_obj_filtered_CCA_integrated, file = file.path(processedDataDir, "seurat_obj_filtered_CCA_integrated_CR.rda"))
 
-# load(file = file.path(outDir, "eurat_obj_filtered_CCA_integrated_250212.rda"))
+&nbsp;
 
+### Harmony integration 
+
+```{r Harmony integration}
+
+seurat_obj_filtered_unintegrated <- readRDS(file = file.path(processedDataDir, "seurat_obj_filtered_unintegrated_CR.rds"))
+
+options(future.globals.maxSize = 100 * 1024^3) 
+
+seurat_obj_harmony_integrated_CR <- IntegrateLayers(
+  object = seurat_obj_filtered_unintegrated, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony",
+  verbose = TRUE
+) # Harmony converged after 5 iterations
+
+# saveRDS(seurat_obj_harmony_integrated_CR, file = file.path(processedDataDir, "seurat_obj_harmony_integrated_CR.rds"))
 
 # re-join layers after integration
-seurat_obj_filtered_CCA_integrated[["RNA"]] <- JoinLayers(seurat_obj_filtered_CCA_integrated[["RNA"]])
+seurat_obj_harmony_integrated_CR[["RNA"]] <- JoinLayers(seurat_obj_harmony_integrated_CR[["RNA"]])
 
-seurat_obj_filtered_CCA_integrated <- FindNeighbors(seurat_obj_filtered_CCA_integrated, reduction = "integrated.cca", dims = 1:50)
-seurat_obj_filtered_CCA_integrated <- FindClusters(seurat_obj_filtered_CCA_integrated, resolution = 0.99)
-seurat_obj_filtered_CCA_integrated_temp <- FindClusters(seurat_obj_filtered_CCA_integrated, resolution = c(0.8, 0.9, 0.99, 1.1))
-seurat_obj_filtered_CCA_integrated <- RunUMAP(seurat_obj_filtered_CCA_integrated, reduction = "integrated.cca", dims = 1:50, reduction.name = "umap.cca")
+seurat_obj_harmony_integrated_CR <- FindNeighbors(seurat_obj_harmony_integrated_CR, reduction = "harmony", dims = 1:50)
+seurat_obj_harmony_integrated_CR <- FindClusters(seurat_obj_harmony_integrated_CR, resolution = 0.3, cluster.name = "harmony_clusters")
+seurat_obj_harmony_integrated_CR <- RunUMAP(seurat_obj_harmony_integrated_CR, reduction = "harmony", dims = 1:50, reduction.name = "umap.harmony")
 
-# save(seurat_obj_filtered_CCA_integrated, file = file.path(outDir, "seurat_obj_filtered_CCA_integrated_joined_layers_250212.rda"))
-# load(file = file.path(outDir, "seurat_obj_filtered_CCA_integrated_joined_layers_250212.rda"))
-table(seurat_obj_filtered_CCA_integrated@meta.data$seurat_clusters)
+# quick visualization
+DimPlot(seurat_obj_harmony_integrated_CR, reduction = "umap.harmony", label = TRUE)
+DimPlot(seurat_obj_harmony_integrated_CR, reduction = "umap.harmony", group.by = "orig.ident")
+pp <- DimPlot(seurat_obj_harmony_integrated_CR, reduction = "umap.harmony", group.by = "orig.ident", split.by = "orig.ident", ncol = 8)
+pp <- DimPlot(seurat_obj_harmony_integrated_CR, reduction = "umap.harmony", group.by = "harmony_clusters", label = TRUE, split.by = "orig.ident", ncol = 8)
 
-DimPlot(seurat_obj_filtered_CCA_integrated, reduction = "umap.cca", group.by = "orig.ident", split.by = "orig.ident")
-DimPlot(seurat_obj_filtered_CCA_integrated, reduction = "umap.cca", label = TRUE)
-DimPlot(seurat_obj_filtered_CCA_integrated, reduction = "umap.cca", group.by = "orig.ident")
+# saveRDS(seurat_obj_harmony_integrated_CR, file = file.path(processedDataDir, "seurat_obj_harmony_integrated_CR_with_UMAP.rds"))
 
+# marker genes
+cluster_markers_harmony_CR <- FindAllMarkers(seurat_obj_harmony_integrated_CR)
+# save(cluster_markers_harmony_CR, file = file.path(processedDataDir, "cluster_markers_harmony_integrated_CR_temp_260226.rda"))
+
+table(seurat_obj_harmony_integrated_ED@meta.data$harmony_clusters)
+
+library(gt)
+table(seurat_obj_harmony_integrated_CR@meta.data$harmony_clusters) %>%
+  as.data.frame() %>%
+  rename(Cluster = Var1, Cell_Count = Freq) %>%
+  mutate(Percent = round(Cell_Count / sum(Cell_Count) * 100, 2)) %>%
+  gt() %>%
+  tab_header(
+    title    = md("**Cell Counts per Harmony Cluster**"),
+    subtitle = md(paste0("Total cells: **", sum(table(seurat_obj_harmony_integrated_CR@meta.data$harmony_clusters)), "**"))
+  ) %>%
+  cols_label(
+    Cluster    = md("**Cluster**"),
+    Cell_Count = md("**Cell Count**"),
+    Percent    = md("**% of Total**")
+  ) %>%
+  fmt_number(columns = Cell_Count, decimals = 0, use_seps = TRUE) %>%
+  fmt_number(columns = Percent, decimals = 2) %>%
+  data_color(
+    columns = Cell_Count,
+    palette = "Blues"
+  ) %>%
+  grand_summary_rows(
+    columns  = Cell_Count,
+    fns      = list(Total ~ sum(.)),
+    fmt      = ~ fmt_number(., decimals = 0, use_seps = TRUE)
+  ) %>%
+  tab_options(
+    table.font.size         = 14,
+    heading.title.font.size = 16,
+    column_labels.font.weight = "bold",
+    table.border.top.color  = "black",
+    table.border.bottom.color = "black"
+  )
+
+
+
+# neutrophils
+neut_markers <- c("CSF3R", "G0S2", "CXCL8", "NAMPT", "PPIF", "ITGAX", "IL1B", "RNF149", "SOD2", "AQP9", "TREM1", "FCGR3A")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = neut_markers)
+FeaturePlot(seurat_obj_harmony_integrated_CR, reduction = "umap.harmony", features = neut_markers)
+
+# IFN markers
+IFN_markers <- c("MX1", "MX2", "IFIT1", "IFIT2", "IFIT3", "ISG15", "IFI44", "OAS1", "OAS3", "OASL")
+#IFN_markers2 <- c("OAS1", "OAS3")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = neut_markers)
+FeaturePlot(seurat_obj_filtered_ED_query, reduction = "umap.cca", features = neut_markers)
+
+# eosinophils
+eos_markers <- c("IL3RA", "FHL3", "CD69", "CKLF", "CD300LF", "PRR5L", "PNPLA6", "SYNE1", "RAB44")
+eos_markers <- c("IL3RA", "CD69")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = eos_markers)
+FeaturePlot(seurat_obj_harmony_integrated_CR, reduction = "umap.harmony", features = eos_markers)
+
+# basophils
+baso_markers <- c("CPA3", "HDC", "GATA2", "SOCS2", "IL4", "IL13", "IL1RL1")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = baso_markers)
+FeaturePlot(seurat_obj_filtered_ED_query_CCA, reduction = "umap.cca", features = baso_markers)
+
+# mast cells
+mast_markers <- c("CPA3", "HDC", "GATA2", "KIT", "MS4A2")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = mast_markers)
+FeaturePlot(seurat_obj_harmony_integrated_CR, reduction = "umap.harmony", features = mast_markers)
+
+# B cells
+# bcells_markers <- c("MS4A1", "CD79A", "IGHM", "IRF8", "TNFRSF13C", "TNFRSF13B")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = bcells_markers)
+
+# B cells
+bcells_markers <- c("MS4A1", "CD74", "CD79A", "IGHM", "TNFRSF13B", "TNFRSF13C")
+
+# NK & T cells
+nk_tcells_markers <- c("IL2RB", "IL2RG", "IL32", "TRAC", "TRBC2", "TRC1D10C", "CD3E", "CD3D", "CCL5", "CXCR4")
+FeaturePlot(seurat_obj_filtered_ED_query_CCA, reduction = "umap.cca", features = nk_tcells_markers)
+
+# Monocytes
+mono_markers <- c("C1QA", "C1QB", "C1QC", "CD300E", "VCAN", "LYZ", "TIMP1", "CSF1R", "STAB1", "TGFBI")
+
+# Plasmacytoid dendritic cells
+pdc_markers <- c("GZMB", "LILRA4", "JCHAIN", "MAP1A", "PTPRS")
+FeaturePlot(seurat_obj_filtered_ED_query_CCA, reduction = "umap.cca", features = pdc_markers)
+
+# Squamous and Basal cells
+sqm_basal_markers <- c("SPRR3", "SCEL", "MAL", "SPRR1B", "KRT4", "KRT13", "KRT5", "KRT15", "KRT80", "KRT6A", "KRT78")
+
+# Goblet cells
+gob_markers <- c("MUC5AC", "WFDC2", "BPIFA1", "BPIFB1", "SLPI", "SCGB1A1")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = gob_markers)
+FeaturePlot(seurat_obj_filtered_ED_query, reduction = "umap.cca", features = gob_markers)
+
+# Mucus secreting cells
+muc_sec_cells_markers <- c("ELF3", "CLDN7", "CLDN4", "MUC1", "MUC4", "MUC20")
+
+
+# Ciliated cells
+cil_markers <- c("FOXJ1", "CAPS", "PIFO", "C20orf85", "SNTN", "TUBB4B")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = cil_markers)
+FeaturePlot(seurat_obj_filtered_ED_query, reduction = "umap.cca", features = cil_markers)
+
+
+
+
+```
+
+
+&nbsp;
+
+### QC metrics by cluster
+
+```{r QC metrics by cluster}
+
+metadata_afterQC <- seurat_obj_harmony_integrated_CR@meta.data
+# Calculate QC metrics
+QC_metrics_by_cluster <- metadata_afterQC %>%
+  dplyr::group_by(harmony_clusters) %>% # Group by sample identifier
+  dplyr::summarise(
+    num_cells = n(),                          # Number of cells
+    median_UMIs = median(nCount_RNA), # Median UMIs per cell
+    median_genes = median(nFeature_RNA), # Median genes per cell
+    median_MT = median(Percent_MT), # Median genes per cell
+    
+  )
+
+
+library(gt)
+library(dplyr)
+
+# Cluster annotations
+cluster_annotations <- c(
+  "0"  = "Monocytes/Macrophages",
+  "1"  = "B cells",
+  "2"  = "Neutrophils",
+  "3"  = "Epithelial cells",
+  "4"  = "Epithelial cells (Ciliated)",
+  "5"  = "Epithelial cells",
+  "6"  = "Monocytes/Macrophages",
+  "7"  = "T & NK cells",
+  "8"  = "Neutrophils",
+  "9"  = "Epithelial cells",
+  "10" = "pDC",
+  "11" = "Proliferating cells (B cells)?",
+  "12" = "Monocytes/Macrophages",
+  "13" = "B cells"
+)
+
+# Cell type colors
+celltype_colors <- c(
+  "Monocytes/Macrophages"          = "#E69F00",
+  "B cells"                        = "#56B4E9",
+  "Neutrophils"                    = "#009E73",
+  "Epithelial cells"               = "#CC79A7",
+  "Epithelial cells (Ciliated)"    = "#D55E00",
+  "T & NK cells"                   = "#0072B2",
+  "pDC"                            = "#F0E442",
+  "Proliferating cells (B cells)?" = "#999999"
+)
+
+QC_metrics_by_cluster <- metadata_afterQC %>%
+  dplyr::group_by(harmony_clusters) %>%
+  dplyr::summarise(
+    num_cells    = n(),
+    median_UMIs  = median(nCount_RNA),
+    median_genes = median(nFeature_RNA),
+    median_MT    = median(Percent_MT)
+  ) %>%
+  mutate(
+    harmony_clusters = as.character(harmony_clusters),
+    Cell_Type        = cluster_annotations[harmony_clusters],
+    Cluster          = paste0("C", harmony_clusters),
+    Percent_of_Total = round(num_cells / sum(num_cells) * 100, 2)
+  ) %>%
+  select(Cluster, Cell_Type, num_cells, Percent_of_Total, median_UMIs, median_genes, median_MT)
+
+QC_metrics_by_cluster %>%
+  gt() %>%
+  tab_header(
+    title    = md("**QC Metrics by Harmony Cluster**"),
+    subtitle = md(paste0("Total cells: **", sum(QC_metrics_by_cluster$num_cells), "**"))
+  ) %>%
+  cols_label(
+    Cluster          = md("**Cluster**"),
+    Cell_Type        = md("**Cell Type**"),
+    num_cells        = md("**Cells**"),
+    Percent_of_Total = md("**% Total**"),
+    median_UMIs      = md("**Median UMIs**"),
+    median_genes     = md("**Median Genes**"),
+    median_MT        = md("**Median MT%**")
+  ) %>%
+  # Color the Cell Type column by cell type
+  tab_style(
+    style = cell_fill(color = "#E69F0033"),
+    locations = cells_body(rows = Cell_Type == "Monocytes/Macrophages")
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#56B4E933"),
+    locations = cells_body(rows = Cell_Type %in% c("B cells", "Proliferating cells (B cells)?"))
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#009E7333"),
+    locations = cells_body(rows = Cell_Type == "Neutrophils")
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#CC79A733"),
+    locations = cells_body(rows = grepl("Epithelial", Cell_Type))
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#0072B233"),
+    locations = cells_body(rows = Cell_Type == "T & NK cells")
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#F0E44233"),
+    locations = cells_body(rows = Cell_Type == "pDC")
+  ) %>%
+  # Bold cluster column
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(columns = Cluster)
+  ) %>%
+  # Color scale for median MT%
+  data_color(
+    columns = median_MT,
+    palette = c("white", "red"),
+    domain  = c(0, max(QC_metrics_by_cluster$median_MT))
+  ) %>%
+  # Color scale for cell counts
+  data_color(
+    columns = num_cells,
+    palette = "Blues"
+  ) %>%
+  fmt_number(columns = c(median_UMIs, median_genes), decimals = 0, use_seps = TRUE) %>%
+  fmt_number(columns = c(median_MT, Percent_of_Total), decimals = 2) %>%
+  grand_summary_rows(
+    columns = num_cells,
+    fns     = list(Total ~ sum(.)),
+    fmt     = ~ fmt_number(., decimals = 0, use_seps = TRUE)
+  ) %>%
+  tab_spanner(
+    label   = md("**Cell Counts**"),
+    columns = c(num_cells, Percent_of_Total)
+  ) %>%
+  tab_spanner(
+    label   = md("**QC Metrics**"),
+    columns = c(median_UMIs, median_genes, median_MT)
+  ) %>%
+  # tab_footnote(
+  #   footnote  = "MT% threshold used for QC filtering: 10%",
+  #   locations = cells_column_labels(columns = median_MT)
+  # ) %>%
+  tab_options(
+    table.font.size              = 13,
+    heading.title.font.size      = 16,
+    heading.subtitle.font.size   = 13,
+    column_labels.font.weight    = "bold",
+    table.border.top.color       = "black",
+    table.border.bottom.color    = "black",
+    row.striping.include_table_body = FALSE
+  )
+
+
+cluster_annotations_df <- data.frame(
+  harmony_clusters = names(cluster_annotations),
+  cell_type       = unname(cluster_annotations)
+)
+
+
+cell_metadata_CR <- seurat_obj_harmony_integrated_CR@meta.data %>%
+  tibble::rownames_to_column(var = "cell_id") %>%
+  inner_join(cluster_annotations_df) 
+
+# save(cell_metadata_CR, file = file.path(processedDataDir, "cell_metadata_CR_temp_260226.rda"))
 
 ```
 

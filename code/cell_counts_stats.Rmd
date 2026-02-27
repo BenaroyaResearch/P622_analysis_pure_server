@@ -1,0 +1,133 @@
+---
+title: "P622-3 10X fixed data: Cell count numbers loading vs captured"
+output: html_document
+author: Naresh Doni Jayavelu
+---
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+## Load all necessary libraries, although I do not like to.
+
+```{r loadLibraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(Seurat)
+library(stringr)
+library(ggpubr)
+library(gridExtra)
+library(car)
+library(lme4)
+# library(garnett)
+library(ggrepel)
+library(ggrastr)
+library(dplyr)
+library(tidyverse)
+library(presto)
+library(kableExtra)
+library(patchwork)
+library(ggbeeswarm)
+# library(rlang)
+library(ggrastr)
+# library(BPCells)
+library(igraph)
+library(ggraph)
+library(RColorBrewer)
+library(scales)
+library(ComplexUpset)
+library(gt)
+
+options(stringsAsFactors = FALSE)
+set.seed(100)
+
+Csparse_validate = "CsparseMatrix_validate"
+
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### Set up the directories
+```{r set_up_directories, cache = TRUE}
+# baseDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+# baseDir_isilon <- "/nfs/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+baseDir <- "/nfs/pure_bioinformatics/workspace/ndonijayavelu/P622_analysis_pure_server"
+# annoExtDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/Annotation_files"
+outDir <- file.path(baseDir, "output")
+dataDir <- file.path(baseDir, "data")
+processedDataDir <- file.path(baseDir, "processed_data")
+annoDir <- file.path(baseDir, "annotation")
+# tabDir <- file.path(outDir, "scanpy_related", "Tables")
+# scanpyDir <- file.path(outDir, "scanpy_related", "without_T176")
+# scanpyDir_isilon <- file.path(baseDir_isilon, "output", "scanpy_related", "without_T176")
+# degDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list")
+# figDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list", "Figures")
+# degDir <- file.path(baseDir, "code/without_T176/PseudoBulk_analysis/4_conditions")
+# enrichRDir <- file.path(baseDir, "enrichR_database")
+# enrichDir <- file.path(baseDir, "code/without_T176/PseudoBulk_DEGs_enrichments")
+# figDir <- file.path(baseDir, "code/without_T176/Figs_AAAAI_Feb2026/T2_signature_vs_cellComp")
+
+```
+
+
+### Define color codes
+```{r set_up_directories, cache = TRUE}
+
+col_sel_cell <- c("Basal" = "#DDCBA4FF", "MitoticBasal" = "#D99E4CFF", 
+             "SupraBasal" = "#BE3428FF", "Secretory" = "#95C65CFF", 
+             "Club" = "#088BBEFF", "Goblet" = "#F28A8AFF", 
+             "MucousSecretory" = "#0E7175FF","MucousCiliated" = "#94D0FFFF", 
+             "Deuterosomal" = "#FFB900FF", "Ciliated" = "#8795E8FF", 
+             "RareCells" = "#C774E8FF")
+
+
+col_sel_donor <- c(Healthy = "darkgrey", "Non-T2" = "#5773CCFF", "T2" = "#FFB900FF")
+
+col_sel_condition <- c("Uninfected" = "#66C2A5", "RV16" = "#FC8D62", "IL-13" = "#8DA0CB", "IL-13_RV16" = "#E78AC3")
+
+cell_type_levels = c("Basal", "MitoticBasal", "SupraBasal", "Secretory", 
+                       "Club", "Goblet", "MucousSecretory", "MucousCiliated", 
+                       "Deuterosomal", "Ciliated", "RareCells")
+condition_levels <- c("Uninfected", "RV16", "IL-13", "IL-13_RV16")
+
+```
+
+
+### Read cell count metadata
+
+```{r Read the marker genes list}
+
+
+```
+
+
+
+
+### Read cell count metadata
+
+```{r Read the marker genes list}
+
+# CR
+load(file = file.path(processedDataDir, "cell_metadata_CR_temp_260226.rda")) # cell_metadata_CR
+
+# ED
+load(file = file.path(processedDataDir, "cell_metadata_ED_temp_260226.rda")) # cell_metadata_ED
+
+
+```
+

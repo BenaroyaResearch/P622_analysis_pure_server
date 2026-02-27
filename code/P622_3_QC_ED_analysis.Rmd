@@ -1,5 +1,5 @@
 ---
-title: "P622-2 10X fixed data on ED called cells: QC and analysis"
+title: "P622-3 10X fixed data on ED called cells: QC and analysis"
 output: html_document
 author: Naresh Doni Jayavelu
 ---
@@ -70,6 +70,7 @@ baseDir <- "/nfs/pure_bioinformatics/workspace/ndonijayavelu/P622_analysis_pure_
 outDir <- file.path(baseDir, "output")
 dataDir <- file.path(baseDir, "data")
 processedDataDir <- file.path(baseDir, "processed_data")
+annoDir <- file.path(baseDir, "annotation")
 # tabDir <- file.path(outDir, "scanpy_related", "Tables")
 # scanpyDir <- file.path(outDir, "scanpy_related", "without_T176")
 # scanpyDir_isilon <- file.path(baseDir_isilon, "output", "scanpy_related", "without_T176")
@@ -104,6 +105,26 @@ cell_type_levels = c("Basal", "MitoticBasal", "SupraBasal", "Secretory",
 condition_levels <- c("Uninfected", "RV16", "IL-13", "IL-13_RV16")
 
 ```
+
+
+### Read ED called cells information
+
+```{r Read the marker genes list}
+
+# load ED cells
+load(file = file.path(processedDataDir, "P622_3_emptyDrops_out_32_samples.rda")) # P622_3_df_all_emptyDrops_out
+
+# filter for true cells
+P622_3_df_all_emptyDrops_out_filtered <- P622_3_df_all_emptyDrops_out %>%
+  filter(FDR < 0.001) %>%
+  filter(lower == 100 & retain == 300)
+
+rm(P622_3_df_all_emptyDrops_out)
+
+
+```
+
+
 
 
 ### Analysis on Cell Rangers filtered matrix data 
@@ -221,9 +242,804 @@ cellsAfterQCFilter <-
 
 
 # Filter bad/low quality cells
-seurat_obj_filtered <- subset(seurat_obj, cells = cellsAfterQCFilter)
+seurat_obj_filtered_CR <- subset(seurat_obj, cells = cellsAfterQCFilter)
+
+# QC metrics
+
+# Extract metadata
+metadata_afterQC_CR <- seurat_obj_filtered_CR@meta.data
+
+
+# Calculate QC metrics
+afterQC_metrics_CR <- metadata_afterQC_CR %>%
+  dplyr::group_by(orig.ident) %>% # Group by sample identifier
+  dplyr::summarise(
+    num_cells_afterQC_CR = n(),                          # Number of cells
+    median_UMIs_afterQC_CR = median(nCount_RNA), # Median UMIs per cell
+    median_genes_afterQC_CR = median(nFeature_RNA), # Median genes per cell
+    median_MT_afterQC_CR = median(Percent_MT), # Median genes per cell
+    min_genes_afterQC_CR = min(nFeature_RNA), # Min genes per cell
+    max_genes_afterQC_CR = max(nFeature_RNA) # Min genes per cell
+    
+  )
 
 
 ```
+
+
+### Read raw unfiltered matrix data 
+
+```{r Read the marker genes list}
+
+# dataDirs
+rawdataDirs <- c(
+  "/nfs/pure_bioinformatics/pipeline/Illumina/260218_VH00126_450_222HCHWNX/Project_P622-3Processed_bri_260220/pool622-3_1/outs/per_sample_outs")
+
+# Read in samples individually and combine file names
+file_names_h5_unfiltered <- unlist(lapply(rawdataDirs, function(dir) {
+  list.files(
+    dir,
+    full.names = TRUE,
+    recursive = TRUE,
+    pattern = "sample_raw_feature_bc_matrix.h5"
+  )
+}))
+
+# Read in samples individually and combine file names
+file_names_h5_filtered <- unlist(lapply(rawdataDirs, function(dir) {
+  list.files(
+    dir,
+    full.names = TRUE,
+    recursive = TRUE,
+    pattern = "sample_filtered_feature_bc_matrix.h5"
+  )
+}))[1]
+
+# extract sample names from file paths
+sampleList <- str_extract(file_names_h5_unfiltered, "(?<=per_sample_outs/[/]?)[^/]+")
+
+# read expression data
+gexObjectsList <- lapply(file_names_h5_unfiltered, Read10X_h5)
+names(gexObjectsList) <- sampleList
+
+lapply(gexObjectsList, dim)
+
+gexObject_filtered <- lapply(file_names_h5_filtered, Read10X_h5)
+
+genes_to_keep <- rownames(gexObject_filtered[[1]])
+
+seuratObjectsList <- vector("list", length = length(sampleList))
+for (k in 1:length(sampleList)){
+  counts <- gexObjectsList[[k]]
+  # Keep only genes present in the CR filtered matrix
+  counts <- counts[genes_to_keep, ]
+  # keep only ED cells
+  ED_cells <- P622_3_df_all_emptyDrops_out_filtered %>%
+    filter(sample_name == sampleList[[k]]) %>%
+    pull(cellbc)
+  counts <- counts[, ED_cells]
+  seuratObjectsList[[k]] <- CreateSeuratObject(counts = counts, 
+                                               min.features = 0, 
+                                               min.cells = 0,
+                                               project = sampleList[k])
+}
+
+
+# add QC metrics
+for(k in 1:length(seuratObjectsList)){
+  seurat_obj <- seuratObjectsList[[k]]
+  seurat_obj[["Percent_MT"]] <- PercentageFeatureSet(seurat_obj, pattern = "^MT-")
+  seurat_obj[["Percent_RIBO"]] <- PercentageFeatureSet(seurat_obj, pattern = "^RP[SL]")
+  seurat_obj[["Percent_HB"]] <- PercentageFeatureSet(seurat_obj, pattern = "^HB[^P]")
+  seuratObjectsList[[k]] <- seurat_obj
+}
+
+# merge samples
+merged_seurat_obj_ED_cells <- merge(x = seuratObjectsList[[1]], 
+                      y = seuratObjectsList[2:length(seuratObjectsList)], 
+                      add.cell.ids = sampleList)
+
+# make sure merged seurat object is same as individual objects
+all(sum(sapply(seuratObjectsList, function(x) dim(x)[2])) == dim(merged_seurat_obj_ED_cells)[2])
+
+# save as an .rds object
+# saveRDS(merged_seurat_obj_ED_cells, file = file.path(processedDataDir, "merged_seurat_obj_ED_cells.rds"))
+# merged_seurat_obj_ED_cells <- readRDS(file = file.path(processedDataDir, "merged_seurat_obj_ED_cells.rds"))
+
+
+```
+
+&nbsp;
+
+### ED cells: QC stats and plots before filtering
+
+```{r QC stats and plots before filtering}
+
+# Extract metadata
+metadata_beforeQC_ED <- merged_seurat_obj_ED_cells@meta.data
+
+# Calculate QC metrics
+beforeQC_metrics_ED <- metadata_beforeQC_ED %>%
+  dplyr::group_by(orig.ident) %>% # Group by sample identifier
+  dplyr::summarise(
+    num_cells_beforeQC_ED = n(),                  # Number of cells
+    median_UMIs_beforeQC_ED = median(nCount_RNA), # Median UMIs per cell
+    median_genes_beforeQC_ED = median(nFeature_RNA), # Median genes per cell
+    median_MT_beforeQC_ED = median(Percent_MT),
+    min_genes_beforeQC_ED = min(nFeature_RNA), # Min genes per cell
+    max_genes_beforeQC_ED = max(nFeature_RNA) # Min genes per cell
+  )
+
+
+beforeQC_metrics %>% mutate_if(is.numeric, round, 1) %>%
+  kbl() %>% kable_paper("hover", full_width = F, bootstrap_options = "condensed", font_size = 12)
+
+
+# QC plots
+
+generate_histogram_plot <- function(metadata, feature, bins = 50) {
+  # Validate input
+  if (!feature %in% colnames(metadata)) {
+    stop(sprintf("The feature '%s' is not a column in the provided metadata.", feature))
+  }
+  
+  # Calculate median values for the feature by group
+  temp_data <- metadata %>%
+    group_by(orig.ident) %>%
+    summarise(median_number = median(.data[[feature]], na.rm = TRUE))
+  
+  # Generate plot
+  temp_plot <- metadata %>%
+    ggplot(aes(x = .data[[feature]])) +
+    geom_histogram(bins = bins, color = "black", alpha = 0.7) + # Add histogram
+    facet_wrap(~orig.ident, nrow = 4, scales = "free") + # Facet by sample
+    geom_vline(data = temp_data, aes(xintercept = median_number), linetype = "dashed", color = "red") + # Median line
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 90, size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title.x = element_text(size = 14),
+      axis.title.y = element_text(size = 14),
+      legend.text = element_text(size = 14),
+      legend.title = element_blank(),
+      legend.position = "none"
+    ) +
+    labs(
+      x = feature,
+      y = "Cell Count",
+      title = sprintf("%s Distribution Across Samples", feature)
+    )
+  
+  # Return the plot
+  return(temp_plot)
+}
+
+umi_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "nCount_RNA", 
+  bins = 50
+)
+
+gene_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "nFeature_RNA", 
+  bins = 50
+)
+
+mt_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "Percent_MT", 
+  bins = 50
+)
+
+ribo_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "Percent_RIBO", 
+  bins = 50
+)
+
+hb_plot <- generate_histogram_plot(
+  metadata = metadata_beforeQC, 
+  feature = "Percent_HB", 
+  bins = 50
+)
+
+
+```
+
+&nbsp;
+
+### QC stats and plots after filtering
+
+```{r QC stats and plots after filtering}
+
+# metadata_beforeQC_ED <- merged_seurat_obj_ED_cells@meta.data
+
+# 
+qcMetricsThresholds <-
+  c(
+    "min_nFeature_RNA" = 100,
+    "max_nFeature_RNA" = 4000,
+    "max_nCount_RNA" = 20000,
+    "percent_mito" = 10
+  )
+
+total_cells <- nrow(metadata_beforeQC_ED)
+
+# lets get the number of cells removed for every QC metric cutoff value
+tt <- metadata_beforeQC_ED %>%
+  mutate(
+    fail_min_nFeature = nFeature_RNA <  qcMetricsThresholds["min_nFeature_RNA"],
+    fail_max_nFeature = nFeature_RNA >  qcMetricsThresholds["max_nFeature_RNA"],
+    fail_max_MT       = Percent_MT   >  qcMetricsThresholds["percent_mito"],
+    fail_max_nCount   = nCount_RNA   >  qcMetricsThresholds["max_nCount_RNA"]
+  ) %>%
+  summarise(across(starts_with("fail_"), sum)) %>%
+  pivot_longer(everything(), names_to = "Filter", values_to = "Cells_Failed") %>%
+  mutate(Percent_Failed = round(Cells_Failed / total_cells * 100, 2)) %>%
+  arrange(desc(Cells_Failed))
+
+
+
+
+# Cumulative pass counts
+n_after <- metadata_beforeQC_ED %>%
+  mutate(
+    pass_min_nFeature = nFeature_RNA >= qcMetricsThresholds["min_nFeature_RNA"],
+    pass_max_nFeature = pass_min_nFeature & nFeature_RNA <= qcMetricsThresholds["max_nFeature_RNA"],
+    pass_max_MT       = pass_max_nFeature & Percent_MT   <= qcMetricsThresholds["percent_mito"],
+    pass_max_nCount   = pass_max_MT       & nCount_RNA   <= qcMetricsThresholds["max_nCount_RNA"]
+  ) %>%
+  summarise(across(starts_with("pass_"), sum))
+
+# Extract as a named vector to avoid $ reference issues in data.frame()
+cells_remaining <- c(total_cells, 
+                     n_after$pass_min_nFeature, 
+                     n_after$pass_max_nFeature,
+                     n_after$pass_max_MT, 
+                     n_after$pass_max_nCount)
+
+qc_summary <- data.frame(
+  Filter          = c("Starting cells",
+                      "min_nFeature_RNA >= 100",
+                      "max_nFeature_RNA <= 4000",
+                      "Percent_MT <= 10",
+                      "max_nCount_RNA <= 20000"),
+  Cells_Remaining = cells_remaining,
+  Cells_Removed   = c(0, -diff(cells_remaining)),
+  Percent_Removed = round(c(0, -diff(cells_remaining)) / total_cells * 100, 2)
+)
+
+print(qc_summary)
+
+
+### Remove bad QC cells
+# remove bad QC cells
+
+quantile(metadata_beforeQC_ED$nCount_RNA, probs = seq(0, 1, 0.01))
+quantile(metadata_beforeQC_ED$nFeature_RNA, probs = seq(0, 1, 0.01))
+quantile(metadata_beforeQC_ED$Percent_MT, probs = seq(0, 1, 0.01))
+
+
+
+seurat_obj <- merged_seurat_obj_ED_cells
+
+cellsAfterQCFilter <-
+  WhichCells(
+    seurat_obj,
+    expression = nFeature_RNA >= qcMetricsThresholds["min_nFeature_RNA"]) %>% 
+  # keeps 281 of 500
+  intersect(
+    WhichCells(
+      seurat_obj,
+      expression = nFeature_RNA <= qcMetricsThresholds["max_nFeature_RNA"])) %>% 
+  # keeps 279 of 281
+  intersect(
+    WhichCells(
+      seurat_obj, 
+      expression = Percent_MT <= qcMetricsThresholds["percent_mito"])) %>%
+  # keeps 255 of 281
+  intersect(
+    WhichCells(
+      seurat_obj,
+      expression = nCount_RNA <= qcMetricsThresholds["max_nCount_RNA"]))
+
+
+# Filter bad/low quality cells
+seurat_obj_filtered_ED <- subset(seurat_obj, cells = cellsAfterQCFilter)
+seurat_obj_filtered_ED
+
+
+# QC metrics
+
+# Extract metadata
+metadata_afterQC_ED <- seurat_obj_filtered_ED@meta.data
+
+
+# Calculate QC metrics
+afterQC_metrics_ED <- metadata_afterQC_ED %>%
+  dplyr::group_by(orig.ident) %>% # Group by sample identifier
+  dplyr::summarise(
+    num_cells_afterQC_ED = n(),                          # Number of cells
+    median_UMIs_afterQC_ED = median(nCount_RNA), # Median UMIs per cell
+    median_genes_afterQC_ED = median(nFeature_RNA), # Median genes per cell
+    median_MT_afterQC_ED = median(Percent_MT), # Median genes per cell
+    min_genes_afterQC_ED = min(nFeature_RNA), # Min genes per cell
+    max_genes_afterQC_ED = max(nFeature_RNA) # Min genes per cell
+    
+  )
+
+
+afterQC_metrics %>% mutate_if(is.numeric, round, 1) %>%
+  kbl() %>% kable_paper("hover", full_width = F, bootstrap_options = "condensed", font_size = 12)
+
+# QC plots
+umi_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "nCount_RNA", 
+  bins = 50
+)
+
+gene_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "nFeature_RNA", 
+  bins = 50
+)
+
+mt_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "Percent_MT", 
+  bins = 50
+)
+
+ribo_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "Percent_RIBO", 
+  bins = 50
+)
+
+hb_plot <- generate_histogram_plot(
+  metadata = metadata_afterQC, 
+  feature = "Percent_HB", 
+  bins = 50
+)
+
+
+```
+
+&nbsp;
+
+### Merge metadata with CR and ED QC metrics
+
+```{r metadata}
+
+# read sample metadata
+sample_metadata <- readxl::read_xlsx(path = file.path(annoDir, 'P622-3_Final Annotation.xlsx'), sheet = "Final Annotation") %>% janitor::clean_names() %>%
+  rename(orig.ident = sample_name)
+
+CR_ED_qc_metrics <- sample_metadata %>%
+  inner_join(beforeQC_metrics_CR) %>% inner_join(afterQC_metrics_CR)%>%
+  inner_join(beforeQC_metrics_ED) %>% inner_join(afterQC_metrics_ED)
+
+write_csv(CR_ED_qc_metrics, file = file.path(outDir, "CR_ED_qc_metrics_with_sample_metadata.csv"))
+
+tt <- CR_ED_qc_metrics %>%
+  select(orig.ident, subject_id, pre_hyb_cell_count_total, cell_number_input_in_to_hyb,
+         total_number_of_cells_loaded_into_chip_channel, num_cells_beforeQC_CR, num_cells_afterQC_CR,
+         num_cells_beforeQC_ED, num_cells_afterQC_ED)
+
+tt %>% mutate_if(is.numeric, round, 1) %>%
+  arrange(num_cells_beforeQC_CR) %>%
+  kbl() %>% kable_paper("hover", full_width = F, bootstrap_options = "condensed", font_size = 10)
+
+```
+
+
+&nbsp;
+
+### Normalization, Integration and Clustering 
+
+```{r Normalization Integration and Clustering }
+
+### Normalization and clustering 
+get_umap_metadata <- function(seurat_obj){
+  umap_df <- seurat_obj[["umap"]]@cell.embeddings %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "cell_id")
+  meta_df <- seurat_obj@meta.data %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "cell_id")
+  df <- umap_df %>% 
+    inner_join(meta_df)
+  return(df)
+}
+
+
+# normalization and clustering
+seurat_obj_filtered_unintegrated <- NormalizeData(seurat_obj_filtered_ED)
+seurat_obj_filtered_unintegrated <- FindVariableFeatures(seurat_obj_filtered_unintegrated)
+seurat_obj_filtered_unintegrated <- ScaleData(seurat_obj_filtered_unintegrated)
+seurat_obj_filtered_unintegrated <- RunPCA(seurat_obj_filtered_unintegrated)
+
+seurat_obj_filtered_unintegrated <- FindNeighbors(seurat_obj_filtered_unintegrated, dims = 1:50)
+# seurat_obj_filtered_unintegrated <- FindClusters(seurat_obj_filtered_unintegrated, resolution = 0.6, cluster.name = "unintegrated_clusters")
+# seurat_obj_filtered_unintegrated <- FindClusters(seurat_obj_filtered_unintegrated, resolution = 0.5, cluster.name = "unintegrated_clusters_res0.5")
+# seurat_obj_filtered_unintegrated <- FindClusters(seurat_obj_filtered_unintegrated, resolution = 0.4, cluster.name = "unintegrated_clusters_res0.4")
+seurat_obj_filtered_unintegrated <- FindClusters(seurat_obj_filtered_unintegrated, resolution = 0.3, cluster.name = "unintegrated_clusters_res0.3")
+seurat_obj_filtered_unintegrated <- seurat_obj_filtered_unintegrated %>% RunUMAP(dims = 1:50)
+
+# Visualize umap
+DimPlot(seurat_obj_filtered_unintegrated, reduction = "umap", label = TRUE)
+DimPlot(seurat_obj_filtered_unintegrated, reduction = "umap", group.by = "orig.ident")
+pp <- DimPlot(seurat_obj_filtered_unintegrated, reduction = "umap", group.by = "orig.ident", split.by = "orig.ident", ncol = 8)
+
+
+metadata_afterQC_ED_v2 <- metadata_afterQC_ED %>% 
+  rownames_to_column(var = "cellbc") %>%
+  inner_join(sample_metadata) %>%
+  column_to_rownames(var = "cellbc")
+
+all(rownames(metadata_afterQC_ED_v2) == rownames(metadata_afterQC_ED)) # TRUE
+
+seurat_obj_filtered_unintegrated@meta.data <- metadata_afterQC_ED_v2
+
+pp <- DimPlot(seurat_obj_filtered_unintegrated, reduction = "umap", group.by = "subject_id", split.by = "subject_id", ncol = 6)
+
+# save the data
+# saveRDS(seurat_obj_filtered_unintegrated, file = file.path(processedDataDir, "seurat_obj_filtered_unintegrated_ED.rds"))
+
+```
+
+
+&nbsp;
+
+### Harmony integration 
+
+```{r Harmony integration}
+
+seurat_obj_filtered_unintegrated <- readRDS(file = file.path(processedDataDir, "seurat_obj_filtered_unintegrated_ED.rds")) # seurat_obj_filtered_unintegrated
+options(future.globals.maxSize = 100 * 1024^3) 
+
+seurat_obj_harmony_integrated_ED <- IntegrateLayers(
+  object = seurat_obj_filtered_unintegrated, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony",
+  verbose = TRUE
+) # Harmony converged after 5 iterations
+
+# saveRDS(seurat_obj_harmony_integrated_ED, file = file.path(processedDataDir, "seurat_obj_harmony_integrated_ED.rds"))
+
+# re-join layers after integration
+seurat_obj_harmony_integrated_ED[["RNA"]] <- JoinLayers(seurat_obj_harmony_integrated_ED[["RNA"]])
+
+seurat_obj_harmony_integrated_ED <- FindNeighbors(seurat_obj_harmony_integrated_ED, reduction = "harmony", dims = 1:50)
+seurat_obj_harmony_integrated_ED <- FindClusters(seurat_obj_harmony_integrated_ED, resolution = 0.3, cluster.name = "harmony_clusters")
+seurat_obj_harmony_integrated_ED <- RunUMAP(seurat_obj_harmony_integrated_ED, reduction = "harmony", dims = 1:50, reduction.name = "umap.harmony")
+
+
+pp <- DimPlot(seurat_obj_filtered_ED_query_CCA, reduction = "umap.cca", group.by = "orig.ident", split.by = "orig.ident")
+pp + theme(legend.position = "none")
+
+DimPlot(seurat_obj_harmony_integrated_ED, reduction = "umap.harmony", label = TRUE)
+DimPlot(seurat_obj_harmony_integrated_ED, reduction = "umap.harmony", group.by = "orig.ident")
+pp <- DimPlot(seurat_obj_harmony_integrated_ED, reduction = "umap.harmony", group.by = "orig.ident", split.by = "orig.ident", ncol = 8)
+pp <- DimPlot(seurat_obj_harmony_integrated_ED, reduction = "umap.harmony", group.by = "harmony_clusters", label = TRUE, split.by = "orig.ident", ncol = 8)
+
+# saveRDS(seurat_obj_harmony_integrated_ED, file = file.path(processedDataDir, "seurat_obj_harmony_integrated_ED_with_UMAP.rds"))
+
+# marker genes
+cluster_markers_harmony_ED <- FindAllMarkers(seurat_obj_harmony_integrated_ED)
+# save(cluster_markers_harmony_ED, file = file.path(processedDataDir, "cluster_markers_harmony_integrated_ED_temp_260226.rda"))
+load(file = file.path(processedDataDir, "cluster_markers_harmony_integrated_ED_temp_260226.rda")) # cluster_markers_harmony_ED
+load(file = file.path(processedDataDir, "cluster_markers_harmony_integrated_CR_temp_260226.rda")) # cluster_markers_harmony_CR
+
+table(seurat_obj_harmony_integrated_ED@meta.data$harmony_clusters)
+
+library(gt)
+table(seurat_obj_harmony_integrated_ED@meta.data$harmony_clusters) %>%
+  as.data.frame() %>%
+  rename(Cluster = Var1, Cell_Count = Freq) %>%
+  mutate(Percent = round(Cell_Count / sum(Cell_Count) * 100, 2)) %>%
+  gt() %>%
+  tab_header(
+    title    = md("**Cell Counts per Harmony Cluster**"),
+    subtitle = md(paste0("Total cells: **", sum(table(seurat_obj_harmony_integrated_ED@meta.data$harmony_clusters)), "**"))
+  ) %>%
+  cols_label(
+    Cluster    = md("**Cluster**"),
+    Cell_Count = md("**Cell Count**"),
+    Percent    = md("**% of Total**")
+  ) %>%
+  fmt_number(columns = Cell_Count, decimals = 0, use_seps = TRUE) %>%
+  fmt_number(columns = Percent, decimals = 2) %>%
+  data_color(
+    columns = Cell_Count,
+    palette = "Blues"
+  ) %>%
+  grand_summary_rows(
+    columns  = Cell_Count,
+    fns      = list(Total ~ sum(.)),
+    fmt      = ~ fmt_number(., decimals = 0, use_seps = TRUE)
+  ) %>%
+  tab_options(
+    table.font.size         = 14,
+    heading.title.font.size = 16,
+    column_labels.font.weight = "bold",
+    table.border.top.color  = "black",
+    table.border.bottom.color = "black"
+  )
+
+
+
+# neutrophils
+neut_markers <- c("CSF3R", "G0S2", "CXCL8", "NAMPT", "PPIF", "ITGAX", "IL1B", "RNF149", "SOD2", "AQP9", "TREM1", "FCGR3A")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = neut_markers)
+FeaturePlot(seurat_obj_harmony_integrated_ED, reduction = "umap.harmony", features = neut_markers)
+
+# IFN markers
+IFN_markers <- c("MX1", "MX2", "IFIT1", "IFIT2", "IFIT3", "ISG15", "IFI44", "OAS1", "OAS3", "OASL")
+#IFN_markers2 <- c("OAS1", "OAS3")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = neut_markers)
+FeaturePlot(seurat_obj_filtered_ED_query, reduction = "umap.cca", features = neut_markers)
+
+# eosinophils
+eos_markers <- c("IL3RA", "FHL3", "CD69", "CKLF", "CD300LF", "PRR5L", "PNPLA6", "SYNE1", "RAB44")
+eos_markers <- c("IL3RA", "CD69")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = eos_markers)
+FeaturePlot(seurat_obj_harmony_integrated_ED, reduction = "umap.harmony", features = eos_markers)
+
+# basophils
+baso_markers <- c("CPA3", "HDC", "GATA2", "SOCS2", "IL4", "IL13", "IL1RL1")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = baso_markers)
+FeaturePlot(seurat_obj_filtered_ED_query_CCA, reduction = "umap.cca", features = baso_markers)
+
+# mast cells
+mast_markers <- c("CPA3", "HDC", "GATA2", "KIT", "MS4A2")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = mast_markers)
+FeaturePlot(seurat_obj_filtered_ED_query_CCA, reduction = "umap.cca", features = mast_markers)
+
+# B cells
+bcells_markers <- c("MS4A1", "CD79A", "IGHM", "IRF8", "TNFRSF13C", "TNFRSF13B")
+FeaturePlot(seurat_obj_harmony_integrated_ED, reduction = "umap.harmony", features = bcells_markers)
+
+# B cells
+# bcells_markers <- c("MS4A1", "CD74", "CD79A", "IGHM", "TNFRSF13B", "TNFRSF13C")
+
+# NK & T cells
+nk_tcells_markers <- c("IL2RB", "IL2RG", "IL32", "TRAC", "TRBC2", "TRC1D10C", "CD3E", "CD3D", "CCL5", "CXCR4")
+FeaturePlot(seurat_obj_filtered_ED_query_CCA, reduction = "umap.cca", features = nk_tcells_markers)
+
+# Monocytes
+mono_markers <- c("C1QA", "C1QB", "C1QC", "CD300E", "VCAN", "LYZ", "TIMP1", "CSF1R", "STAB1", "TGFBI")
+
+# Plasmacytoid dendritic cells
+pdc_markers <- c("GZMB", "LILRA4", "JCHAIN", "MAP1A", "PTPRS")
+FeaturePlot(seurat_obj_filtered_ED_query_CCA, reduction = "umap.cca", features = pdc_markers)
+
+# Squamous and Basal cells
+sqm_basal_markers <- c("SPRR3", "SCEL", "MAL", "SPRR1B", "KRT4", "KRT13", "KRT5", "KRT15", "KRT80", "KRT6A", "KRT78")
+
+# Goblet cells
+gob_markers <- c("MUC5AC", "WFDC2", "BPIFA1", "BPIFB1", "SLPI", "SCGB1A1")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = gob_markers)
+FeaturePlot(seurat_obj_filtered_ED_query, reduction = "umap.cca", features = gob_markers)
+
+# Mucus secreting cells
+muc_sec_cells_markers <- c("ELF3", "CLDN7", "CLDN4", "MUC1", "MUC4", "MUC20")
+
+
+# Ciliated cells
+cil_markers <- c("FOXJ1", "CAPS", "PIFO", "C20orf85", "SNTN", "TUBB4B")
+# FeaturePlot(seurat_obj_filtered_CR_ref, reduction = "umap.cca", features = cil_markers)
+FeaturePlot(seurat_obj_filtered_ED_query, reduction = "umap.cca", features = cil_markers)
+
+
+
+
+```
+
+
+&nbsp;
+
+### QC metrics by cluster
+
+```{r QC metrics by cluster}
+seurat_obj_harmony_integrated_ED <- readRDS(file = file.path(processedDataDir, "seurat_obj_harmony_integrated_ED_with_UMAP.rds"))
+
+metadata_afterQC <- seurat_obj_harmony_integrated_ED@meta.data
+# Calculate QC metrics
+QC_metrics_by_cluster <- metadata_afterQC %>%
+  dplyr::group_by(harmony_clusters) %>% # Group by sample identifier
+  dplyr::summarise(
+    num_cells = n(),                          # Number of cells
+    median_UMIs = median(nCount_RNA), # Median UMIs per cell
+    median_genes = median(nFeature_RNA), # Median genes per cell
+    median_MT = median(Percent_MT), # Median genes per cell
+    
+  )
+
+
+library(gt)
+library(dplyr)
+
+# Cluster annotations
+cluster_annotations <- c(
+  "0"  = "Neutrophils",
+  "1"  = "Monocytes/Macrophages",
+  "2"  = "Neutrophils",
+  "3"  = "B cells",
+  "4"  = "Epithelial cells",
+  "5"  = "B cells",
+  "6"  = "Epithelial cells",
+  "7"  = "Epithelial cells (Ciliated)",
+  "8"  = "Monocytes/Macrophages",
+  "9"  = "Neutrophils",
+  "10" = "T & NK cells",
+  "11" = "Monocytes/Macrophages",
+  "12" = "Epithelial cells",
+  "13" = "pDC",
+  "14" = "B cells",
+  "15" = "Eosinophils/Mast/Basophils"
+)
+
+cluster_annotations_df <- data.frame(
+  harmony_clusters = names(cluster_annotations),
+  cell_type       = unname(cluster_annotations)
+)
+
+QC_metrics_by_cluster <- metadata_afterQC %>%
+  dplyr::group_by(harmony_clusters) %>%
+  dplyr::summarise(
+    num_cells    = n(),
+    median_UMIs  = median(nCount_RNA),
+    median_genes = median(nFeature_RNA),
+    median_MT    = median(Percent_MT)
+  ) %>%
+  mutate(
+    harmony_clusters = as.character(harmony_clusters),
+    Cell_Type        = cluster_annotations[harmony_clusters],
+    Cluster          = paste0("C", harmony_clusters),
+    Percent_of_Total = round(num_cells / sum(num_cells) * 100, 2)
+  ) %>%
+  select(Cluster, Cell_Type, num_cells, Percent_of_Total, median_UMIs, median_genes, median_MT)
+
+QC_metrics_by_cluster %>%
+  gt() %>%
+  tab_header(
+    title    = md("**QC Metrics by Harmony Cluster**"),
+    subtitle = md(paste0("Total cells: **", sum(QC_metrics_by_cluster$num_cells), "**"))
+  ) %>%
+  cols_label(
+    Cluster          = md("**Cluster**"),
+    Cell_Type        = md("**Cell Type**"),
+    num_cells        = md("**Cells**"),
+    Percent_of_Total = md("**% Total**"),
+    median_UMIs      = md("**Median UMIs**"),
+    median_genes     = md("**Median Genes**"),
+    median_MT        = md("**Median MT%**")
+  ) %>%
+  # Color rows by cell type
+  tab_style(
+    style     = cell_fill(color = "#009E7333"),
+    locations = cells_body(rows = Cell_Type == "Neutrophils")
+  ) %>%
+  tab_style(
+    style     = cell_fill(color = "#E69F0033"),
+    locations = cells_body(rows = Cell_Type == "Monocytes/Macrophages")
+  ) %>%
+  tab_style(
+    style     = cell_fill(color = "#56B4E933"),
+    locations = cells_body(rows = Cell_Type == "B cells")
+  ) %>%
+  tab_style(
+    style     = cell_fill(color = "#CC79A733"),
+    locations = cells_body(rows = grepl("Epithelial", Cell_Type))
+  ) %>%
+  tab_style(
+    style     = cell_fill(color = "#0072B233"),
+    locations = cells_body(rows = Cell_Type == "T & NK cells")
+  ) %>%
+  tab_style(
+    style     = cell_fill(color = "#F0E44233"),
+    locations = cells_body(rows = Cell_Type == "pDC")
+  ) %>%
+  tab_style(
+    style     = cell_fill(color = "#D55E0033"),
+    locations = cells_body(rows = Cell_Type == "Eosinophils/Mast/Basophils")
+  ) %>%
+  # Bold cluster column
+  tab_style(
+    style     = cell_text(weight = "bold"),
+    locations = cells_body(columns = Cluster)
+  ) %>%
+  # Color scale for median MT%
+  data_color(
+    columns = median_MT,
+    palette = c("white", "red"),
+    domain  = c(0, max(QC_metrics_by_cluster$median_MT))
+  ) %>%
+  # Color scale for cell counts
+  data_color(
+    columns = num_cells,
+    palette = "Blues"
+  ) %>%
+  fmt_number(columns = c(median_UMIs, median_genes), decimals = 0, use_seps = TRUE) %>%
+  fmt_number(columns = c(median_MT, Percent_of_Total), decimals = 2) %>%
+  grand_summary_rows(
+    columns = num_cells,
+    fns     = list(Total ~ sum(.)),
+    fmt     = ~ fmt_number(., decimals = 0, use_seps = TRUE)
+  ) %>%
+  tab_spanner(
+    label   = md("**Cell Counts**"),
+    columns = c(num_cells, Percent_of_Total)
+  ) %>%
+  tab_spanner(
+    label   = md("**QC Metrics**"),
+    columns = c(median_UMIs, median_genes, median_MT)
+  ) %>%
+  # tab_footnote(
+  #   footnote  = "MT% threshold used for QC filtering: 10%",
+  #   locations = cells_column_labels(columns = median_MT)
+  # ) %>%
+  tab_options(
+    table.font.size                 = 13,
+    heading.title.font.size         = 16,
+    heading.subtitle.font.size      = 13,
+    column_labels.font.weight       = "bold",
+    table.border.top.color          = "black",
+    table.border.bottom.color       = "black",
+    row.striping.include_table_body = FALSE
+  )
+
+cell_metadata_ED <- seurat_obj_harmony_integrated_ED@meta.data %>%
+  tibble::rownames_to_column(var = "cell_id") %>%
+  inner_join(cluster_annotations_df) 
+
+# save(cell_metadata_ED, file = file.path(processedDataDir, "cell_metadata_ED_temp_260226.rda"))
+
+```
+
+
+
+&nbsp;
+
+### Normalization, Integration and Clustering 
+
+```{r Normalization Integration and Clustering }
+
+```
+
+
+&nbsp;
+
+### Normalization, Integration and Clustering 
+
+```{r Normalization Integration and Clustering }
+
+```
+
+
+&nbsp;
+
+### Normalization, Integration and Clustering 
+
+```{r Normalization Integration and Clustering }
+
+```
+
+
+
+&nbsp;
+
+### Normalization, Integration and Clustering 
+
+```{r Normalization Integration and Clustering }
+
+```
+
+
+
+
+
 
 

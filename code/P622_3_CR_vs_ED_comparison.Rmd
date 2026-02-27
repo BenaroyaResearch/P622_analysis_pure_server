@@ -1,0 +1,473 @@
+---
+title: "P622-3 10X fixed data: CR vs ED comparisons"
+output: html_document
+author: Naresh Doni Jayavelu
+---
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+## Load all necessary libraries, although I do not like to.
+
+```{r loadLibraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(Seurat)
+library(stringr)
+library(ggpubr)
+library(gridExtra)
+library(car)
+library(lme4)
+# library(garnett)
+library(ggrepel)
+library(ggrastr)
+library(dplyr)
+library(tidyverse)
+library(presto)
+library(kableExtra)
+library(patchwork)
+library(ggbeeswarm)
+# library(rlang)
+library(ggrastr)
+# library(BPCells)
+library(igraph)
+library(ggraph)
+library(RColorBrewer)
+library(scales)
+library(ComplexUpset)
+library(gt)
+
+options(stringsAsFactors = FALSE)
+set.seed(100)
+
+Csparse_validate = "CsparseMatrix_validate"
+
+```
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### Set up the directories
+```{r set_up_directories, cache = TRUE}
+# baseDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+# baseDir_isilon <- "/nfs/bioinformatics/workspace/ndonijayavelu/P608_5_analysis_server"
+baseDir <- "/nfs/pure_bioinformatics/workspace/ndonijayavelu/P622_analysis_pure_server"
+# annoExtDir <- "/mnt/bioinformatics/workspace/ndonijayavelu/Annotation_files"
+outDir <- file.path(baseDir, "output")
+dataDir <- file.path(baseDir, "data")
+processedDataDir <- file.path(baseDir, "processed_data")
+annoDir <- file.path(baseDir, "annotation")
+# tabDir <- file.path(outDir, "scanpy_related", "Tables")
+# scanpyDir <- file.path(outDir, "scanpy_related", "without_T176")
+# scanpyDir_isilon <- file.path(baseDir_isilon, "output", "scanpy_related", "without_T176")
+# degDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list")
+# figDir <- file.path(outDir, "scanpy_related", "without_T176", "DEGs_list", "Figures")
+# degDir <- file.path(baseDir, "code/without_T176/PseudoBulk_analysis/4_conditions")
+# enrichRDir <- file.path(baseDir, "enrichR_database")
+# enrichDir <- file.path(baseDir, "code/without_T176/PseudoBulk_DEGs_enrichments")
+# figDir <- file.path(baseDir, "code/without_T176/Figs_AAAAI_Feb2026/T2_signature_vs_cellComp")
+
+```
+
+
+### Define color codes
+```{r set_up_directories, cache = TRUE}
+
+col_sel_cell <- c("Basal" = "#DDCBA4FF", "MitoticBasal" = "#D99E4CFF", 
+             "SupraBasal" = "#BE3428FF", "Secretory" = "#95C65CFF", 
+             "Club" = "#088BBEFF", "Goblet" = "#F28A8AFF", 
+             "MucousSecretory" = "#0E7175FF","MucousCiliated" = "#94D0FFFF", 
+             "Deuterosomal" = "#FFB900FF", "Ciliated" = "#8795E8FF", 
+             "RareCells" = "#C774E8FF")
+
+
+col_sel_donor <- c(Healthy = "darkgrey", "Non-T2" = "#5773CCFF", "T2" = "#FFB900FF")
+
+col_sel_condition <- c("Uninfected" = "#66C2A5", "RV16" = "#FC8D62", "IL-13" = "#8DA0CB", "IL-13_RV16" = "#E78AC3")
+
+cell_type_levels = c("Basal", "MitoticBasal", "SupraBasal", "Secretory", 
+                       "Club", "Goblet", "MucousSecretory", "MucousCiliated", 
+                       "Deuterosomal", "Ciliated", "RareCells")
+condition_levels <- c("Uninfected", "RV16", "IL-13", "IL-13_RV16")
+
+```
+
+
+### Read cell metadata for CR and ED
+
+```{r Read the marker genes list}
+
+# CR
+load(file = file.path(processedDataDir, "cell_metadata_CR_temp_260226.rda")) # cell_metadata_CR
+
+# ED
+load(file = file.path(processedDataDir, "cell_metadata_ED_temp_260226.rda")) # cell_metadata_ED
+
+
+```
+
+
+### Cell BC overlap between CR and ED
+
+```{r Read the marker genes list}
+
+library(ggVennDiagram)
+library(ggplot2)
+
+# Abbreviation lookup
+celltype_abbrev <- c(
+  "Monocytes/Macrophages"          = "Macro",
+  "B cells"                        = "Bcell",
+  "Neutrophils"                    = "Neut",
+  "Epithelial cells"               = "Epi",
+  "Epithelial cells (Ciliated)"    = "Epi_Cil",
+  "T & NK cells"                   = "TNK",
+  "pDC"                            = "pDC",
+  "Proliferating cells (B cells)?" = "Prolif",
+  "Eosinophils/Mast/Basophils"     = "Eos_Mast_Baso"
+)
+
+# Create cell_cluster column in both dataframes
+cell_metadata_CR <- cell_metadata_CR %>%
+  mutate(cell_cluster = paste0("C", harmony_clusters, "_", celltype_abbrev[cell_type]))
+
+cell_metadata_ED <- cell_metadata_ED %>%
+  mutate(cell_cluster = paste0("C", harmony_clusters, "_", celltype_abbrev[cell_type]))
+
+# Overall Venn - using cell barcodes
+venn_list <- list(
+  CR  = cell_metadata_CR$cell_id,
+  ED  = cell_metadata_ED$cell_id
+)
+
+pp <- ggVennDiagram(venn_list, label_alpha = 0) +
+  scale_fill_gradient(low = "white", high = "#0072B2") +
+  labs(title    = "Cell Barcode Overlap: CellRanger vs EmptyDrops",
+       subtitle = paste0("CR: ", nrow(cell_metadata_CR), " cells | ",
+                         "ED: ", nrow(cell_metadata_ED), " cells")) +
+  theme(plot.title    = element_text(hjust = 0.5, face = "bold", size = 14),
+        plot.subtitle = element_text(hjust = 0.5, size = 11))
+
+
+### sample level Table
+library(gt)
+library(dplyr)
+
+# Compute overlap per sample
+overlap_summary <- cell_metadata_CR %>%
+  select(orig.ident, cell_id) %>%
+  full_join(
+    cell_metadata_ED %>% select(orig.ident, cell_id),
+    by = c("orig.ident", "cell_id"),
+    suffix = c("_CR", "_ED")
+  ) %>%
+  mutate(
+    source = case_when(
+      !is.na(cell_id) & cell_id %in% cell_metadata_CR$cell_id & 
+        cell_id %in% cell_metadata_ED$cell_id ~ "Shared",
+      cell_id %in% cell_metadata_CR$cell_id               ~ "CR only",
+      cell_id %in% cell_metadata_ED$cell_id               ~ "ED only"
+    )
+  ) %>%
+  group_by(orig.ident, source) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  tidyr::pivot_wider(names_from = source, values_from = n, values_fill = 0) %>%
+  mutate(
+    Total_CR       = `CR only` + Shared,
+    Total_ED       = `ED only` + Shared,
+    ED_gain        = `ED only`,
+    Pct_gain       = round(ED_gain / Total_CR * 100, 2),
+    Pct_overlap    = round(Shared  / Total_ED * 100, 2)
+  ) %>%
+  select(orig.ident, Total_CR, Total_ED, Shared, `CR only`, `ED only`, Pct_overlap, Pct_gain)
+
+# GT table
+overlap_summary_table <- overlap_summary %>%
+  gt() %>%
+  tab_header(
+    title    = md("**Cell Recovery: CellRanger vs EmptyDrops**"),
+    subtitle = md("Per-sample barcode overlap summary")
+  ) %>%
+  cols_label(
+    orig.ident   = md("**Sample**"),
+    Total_CR     = md("**Total CR**"),
+    Total_ED     = md("**Total ED**"),
+    Shared       = md("**Shared**"),
+    `CR only`    = md("**CR Only**"),
+    `ED only`    = md("**ED Only**"),
+    Pct_overlap  = md("**% Shared of ED**"),
+    Pct_gain     = md("**% Gain over CR**")
+  ) %>%
+  tab_spanner(
+    label   = md("**Cell Counts**"),
+    columns = c(Total_CR, Total_ED, Shared, `CR only`, `ED only`)
+  ) %>%
+  tab_spanner(
+    label   = md("**Recovery Metrics**"),
+    columns = c(Pct_overlap, Pct_gain)
+  ) %>%
+  data_color(
+    columns = Total_ED,
+    palette = "Blues"
+  ) %>%
+  data_color(
+    columns = Pct_gain,
+    palette = c("white", "#009E73")
+  ) %>%
+  data_color(
+    columns = Pct_overlap,
+    palette = c("white", "#0072B2")
+  ) %>%
+  fmt_number(
+    columns  = c(Total_CR, Total_ED, Shared, `CR only`, `ED only`),
+    decimals = 0,
+    use_seps = TRUE
+  ) %>%
+  fmt_number(
+    columns  = c(Pct_overlap, Pct_gain),
+    decimals = 2
+  ) %>%
+  grand_summary_rows(
+    columns = c(Total_CR, Total_ED, Shared, `CR only`, `ED only`),
+    fns     = list(Total ~ sum(.)),
+    fmt     = ~ fmt_number(., decimals = 0, use_seps = TRUE)
+  ) %>%
+  tab_footnote(
+    footnote  = "% Gain = ED-only cells as a percentage of total CR cells",
+    locations = cells_column_labels(columns = Pct_gain)
+  ) %>%
+  tab_footnote(
+    footnote  = "% Shared of ED = barcodes shared with CR as a percentage of total ED cells",
+    locations = cells_column_labels(columns = Pct_overlap)
+  ) %>%
+  tab_style(
+    style     = cell_text(weight = "bold"),
+    locations = cells_body(columns = orig.ident)
+  ) %>%
+  tab_options(
+    table.font.size                 = 13,
+    heading.title.font.size         = 16,
+    heading.subtitle.font.size      = 12,
+    column_labels.font.weight       = "bold",
+    table.border.top.color          = "black",
+    table.border.bottom.color       = "black",
+    row.striping.include_table_body = TRUE,
+    row.striping.background_color   = "#F9F9F9"
+  )
+
+
+library(gtExtras)
+gtsave_extra(overlap_summary_table, filename = file.path(outDir, "overlap_summary_table_per_sample_CR_vs_ED.html"))
+
+# library(flextable)
+# 
+# # Convert your gt table data to flextable
+# ft <- flextable(overlap_summary) 
+# 
+# # Save as PNG
+# save_as_image(ft, path = file.path(outDir, "overlap_summary_table_per_sample_CR_vs_ED.png"))
+# 
+# # Save as PDF
+# save_as_pdf(ft, path = file.path(outDir, "overlap_summary_table_per_sample_CR_vs_ED.pdf"))
+
+```
+
+
+### Alluvial plots
+
+```{r Read the marker genes list}
+
+
+
+```
+
+
+### Read ED called cells information
+
+```{r Read the marker genes list}
+
+```
+
+
+### Alluvial plots
+
+```{r Read the marker genes list}
+
+library(ggalluvial)
+library(dplyr)
+library(tidyr)
+
+# Short name mapping
+celltype_abbrev <- c(
+  "Monocytes/Macrophages"          = "Mono",
+  "B cells"                        = "Bcell",
+  "Neutrophils"                    = "Neut",
+  "Epithelial cells"               = "Epi",
+  "Epithelial cells (Ciliated)"    = "Epi_Cil",
+  "T & NK cells"                   = "TNK",
+  "pDC"                            = "pDC",
+  "Proliferating cells (B cells)?" = "Prolif",
+  "Eosinophils/Mast/Basophils"     = "Eos_Mast_Baso"
+)
+
+# Color mapping
+celltype_colors <- c(
+  "Neut"          = "#1F77B4FF",
+  "Mono"          = "#FF7F0EFF",
+  "Bcell"         = "#2CA02CFF",
+  "Epi"           = "#D62728FF",
+  "Epi_Cil"       = "#9467BDFF",
+  "TNK"           = "#8C564BFF",
+  "pDC"           = "#E377C2FF",
+  "Prolif"        = "#7F7F7FFF",
+  "Eos_Mast_Baso" = "#BCBD22FF",
+  "Undetected"    = "#17BECFFF"
+)
+
+# Prepare sankey data
+sankey_data <- full_join(
+  cell_metadata_CR %>% 
+    select(cell_id, cell_type) %>%
+    mutate(cell_type_short = celltype_abbrev[cell_type]) %>%
+    rename(CR_celltype = cell_type_short),
+  cell_metadata_ED %>% 
+    select(cell_id, cell_type) %>%
+    mutate(cell_type_short = celltype_abbrev[cell_type]) %>%
+    rename(ED_celltype = cell_type_short),
+  by = "cell_id"
+) %>%
+  mutate(
+    CR_celltype = replace_na(CR_celltype, "Undetected"),
+    ED_celltype = replace_na(ED_celltype, "Undetected")
+  ) %>%
+  group_by(CR_celltype, ED_celltype) %>%
+  summarise(n = n(), .groups = "drop")
+
+# Sankey plot
+pp <- ggplot(sankey_data,
+       aes(axis1 = CR_celltype,
+           axis2 = ED_celltype,
+           y     = n)) +
+  geom_alluvium(aes(fill = CR_celltype),
+                width    = 0.3,
+                alpha    = 0.75,
+                knot.pos = 0.4) +
+  geom_stratum(width     = 0.3,
+               fill      = "white",
+               color     = "grey40",
+               linewidth = 0.5) +
+  geom_text(stat = "stratum",
+            aes(label = after_stat(stratum)),
+            size     = 3.5,
+            fontface = "bold") +
+  scale_x_discrete(limits = c("CellRanger", "EmptyDrops"),
+                   expand = c(0.15, 0.15)) +
+  scale_fill_manual(values = celltype_colors) +
+  labs(title    = "Cell Flow by Cell Type: CellRanger → EmptyDrops",
+       subtitle = paste0("CR: ", nrow(cell_metadata_CR), " cells | ",
+                         "ED: ", nrow(cell_metadata_ED), " cells"),
+       y        = "Number of Cells",
+       fill     = "Cell Type") +
+  theme_minimal() +
+  theme(
+    plot.title      = element_text(hjust = 0.5, face = "bold", size = 14),
+    plot.subtitle   = element_text(hjust = 0.5, size = 11),
+    axis.text.x     = element_text(face = "bold", size = 12),
+    axis.text.y     = element_text(size = 10),
+    legend.position = "right",
+    legend.title    = element_text(face = "bold"),
+    panel.grid      = element_blank()
+  )
+
+# ggsave(file.path(outDir, "sankey_CR_ED_celltype.png"),
+#        width  = 12,
+#        height = 10,
+#        dpi    = 150)
+
+library(gt)
+
+tb <- sankey_data %>%
+  tidyr::pivot_wider(names_from  = ED_celltype, 
+                     values_from = n, 
+                     values_fill = 0) %>%
+  rename(CR_Cell_Type = CR_celltype) %>%
+  gt() %>%
+  tab_header(
+    title    = md("**Cell Flow: CellRanger → EmptyDrops**"),
+    subtitle = md("Number of cells by cell type — rows = CR, columns = ED")
+  ) %>%
+  cols_label(CR_Cell_Type = md("**CR \\ ED**")) %>%
+  # Highlight Undetected column and row
+  tab_style(
+    style     = cell_fill(color = "#17BECF33"),
+    locations = cells_body(columns = Undetected)
+  ) %>%
+  tab_style(
+    style     = cell_fill(color = "#17BECF33"),
+    locations = cells_body(rows = CR_Cell_Type == "Undetected")
+  ) %>%
+  # Bold diagonal (shared cells) - same cell type in both
+  tab_style(
+    style     = cell_text(weight = "bold"),
+    locations = cells_body(columns = CR_Cell_Type)
+  ) %>%
+  data_color(
+    columns   = -CR_Cell_Type,
+    palette   = c("white", "#2CA02CFF"),
+    na_color  = "white"
+  ) %>%
+  grand_summary_rows(
+    columns = -CR_Cell_Type,
+    fns     = list(Total ~ sum(.)),
+    fmt     = ~ fmt_number(., decimals = 0, use_seps = TRUE)
+  ) %>%
+  fmt_number(
+    columns  = -CR_Cell_Type,
+    decimals = 0,
+    use_seps = TRUE
+  ) %>%
+  tab_spanner(
+    label   = md("**EmptyDrops Cell Type**"),
+    columns = -CR_Cell_Type
+  ) %>%
+  tab_footnote(
+    footnote  = "Undetected = cells present in one method but absent in the other",
+    locations = cells_column_labels(columns = Undetected)
+  ) %>%
+  tab_options(
+    table.font.size                 = 13,
+    heading.title.font.size         = 16,
+    heading.subtitle.font.size      = 12,
+    column_labels.font.weight       = "bold",
+    table.border.top.color          = "black",
+    table.border.bottom.color       = "black",
+    row.striping.include_table_body = TRUE,
+    row.striping.background_color   = "#F9F9F9"
+  )
+
+
+```
+
+
+### Read ED called cells information
+
+```{r Read the marker genes list}
+
+```
+
+
