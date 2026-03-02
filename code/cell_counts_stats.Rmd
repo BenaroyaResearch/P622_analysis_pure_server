@@ -115,7 +115,216 @@ condition_levels <- c("Uninfected", "RV16", "IL-13", "IL-13_RV16")
 CR_ED_qc_metrics <- read_csv(file = file.path(outDir, "CR_ED_qc_metrics_with_sample_metadata.csv"))
 
 CR_ED_qc_metrics_select <- CR_ED_qc_metrics %>%
-  select(pre_hyb_cell_count_total, cell_number_input_in_to_hyb, num_cells_beforeQC_CR, num_cells_beforeQC_ED)
+  select(orig.ident, pre_hyb_cell_count_total, cell_number_input_in_to_hyb, num_cells_beforeQC_CR, num_cells_beforeQC_ED)
+
+
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(ggpubr)
+library(ggrepel)
+
+### Pre-Hybridization Cell Count vs Recovered Cells
+# Reshape to long format
+plot_data <- CR_ED_qc_metrics_select %>%
+  select(orig.ident, pre_hyb_cell_count_total, num_cells_beforeQC_CR, num_cells_beforeQC_ED) %>%
+  pivot_longer(
+    cols      = c(num_cells_beforeQC_CR, num_cells_beforeQC_ED),
+    names_to  = "method",
+    values_to = "num_cells"
+  ) %>%
+  mutate(method = recode(method,
+                         "num_cells_beforeQC_CR" = "CellRanger",
+                         "num_cells_beforeQC_ED" = "EmptyDrops"))
+
+pp <- ggplot(plot_data,
+       aes(x     = num_cells,
+           y     = pre_hyb_cell_count_total,
+           color = method,
+           fill  = method)) +
+  geom_point(size  = 3,
+             alpha = 0.8) +
+  geom_smooth(method    = "lm",
+              se        = TRUE,
+              alpha     = 0.15,
+              linewidth = 1) +
+  # geom_text_repel(aes(label = orig.ident),
+  #                 size         = 3,
+  #                 max.overlaps = 20,
+  #                 show.legend  = FALSE) +
+  stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),
+           show.legend = FALSE,
+           size        = 3.5) +
+  scale_color_manual(values = c("CellRanger" = "#4D4D4DFF",
+                                "EmptyDrops" = "#2CA02CFF")) +
+  scale_fill_manual(values  = c("CellRanger" = "#4D4D4DFF",
+                                "EmptyDrops" = "#2CA02CFF")) +
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title    = "Pre-Hybridization Cell Count vs Recovered Cells",
+       subtitle = "CellRanger vs EmptyDrops",
+       y        = "Pre-Hyb Cell Count (Total)",
+       x        = "Number of Cells Before QC",
+       color    = "Method",
+       fill     = "Method") +
+  theme_bw() +
+  theme(
+    plot.title       = element_text(hjust = 0.5, face = "bold", size = 14),
+    plot.subtitle    = element_text(hjust = 0.5, size = 11),
+    axis.text        = element_text(size = 10),
+    axis.title       = element_text(face = "bold", size = 11),
+    legend.position  = "right",
+    legend.title     = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+# ### Input Hybridization Cell Count vs Recovered Cells
+# Reshape to long format
+plot_data <- CR_ED_qc_metrics_select %>%
+  select(orig.ident, cell_number_input_in_to_hyb, num_cells_beforeQC_CR, num_cells_beforeQC_ED) %>%
+  pivot_longer(
+    cols      = c(num_cells_beforeQC_CR, num_cells_beforeQC_ED),
+    names_to  = "method",
+    values_to = "num_cells"
+  ) %>%
+  mutate(method = recode(method,
+                         "num_cells_beforeQC_CR" = "CellRanger",
+                         "num_cells_beforeQC_ED" = "EmptyDrops"))
+
+pp <- ggplot(plot_data,
+       aes(x     = num_cells,
+           y     = cell_number_input_in_to_hyb,
+           color = method,
+           fill  = method)) +
+  geom_point(size  = 3,
+             alpha = 0.8) +
+  geom_smooth(method    = "lm",
+              se        = TRUE,
+              alpha     = 0.15,
+              linewidth = 1) +
+  # geom_text_repel(aes(label = orig.ident),
+  #                 size         = 3,
+  #                 max.overlaps = 20,
+  #                 show.legend  = FALSE) +
+  stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),
+           show.legend = FALSE,
+           size        = 3.5) +
+  scale_color_manual(values = c("CellRanger" = "#4D4D4DFF",
+                                "EmptyDrops" = "#2CA02CFF")) +
+  scale_fill_manual(values  = c("CellRanger" = "#4D4D4DFF",
+                                "EmptyDrops" = "#2CA02CFF")) +
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title    = "Input Hybridization Cell Count vs Recovered Cells",
+       subtitle = "CellRanger vs EmptyDrops",
+       y        = "Input Hybridization Cell Count",
+       x        = "Number of Cells Before QC",
+       color    = "Method",
+       fill     = "Method") +
+  theme_bw() +
+  theme(
+    plot.title       = element_text(hjust = 0.5, face = "bold", size = 14),
+    plot.subtitle    = element_text(hjust = 0.5, size = 11),
+    axis.text        = element_text(size = 10),
+    axis.title       = element_text(face = "bold", size = 11),
+    legend.position  = "right",
+    legend.title     = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+
+# ggsave(file.path(outDir, "scatter_preHyb_vs_cellRecovery_CR_ED.png"),
+#        width  = 10,
+#        height = 7,
+#        dpi    = 150)
+
+
+### gt table
+library(gt)
+library(dplyr)
+
+tb <- CR_ED_qc_metrics_select %>%
+  arrange(desc(num_cells_beforeQC_ED)) %>%
+  mutate(
+    ED_gain     = num_cells_beforeQC_ED - num_cells_beforeQC_CR,
+    ED_gain_pct = round(ED_gain / num_cells_beforeQC_CR * 100, 2)
+  ) %>%
+  gt() %>%
+  tab_header(
+    title    = md("**Cell Recovery Summary: CellRanger vs EmptyDrops**"),
+    subtitle = md("Rows ordered by EmptyDrops cell recovery (descending)")
+  ) %>%
+  cols_label(
+    orig.ident                  = md("**Sample**"),
+    pre_hyb_cell_count_total    = md("**Pre-Hyb Count**"),
+    cell_number_input_in_to_hyb = md("**Input to Hyb**"),
+    num_cells_beforeQC_CR       = md("**CR Cells**"),
+    num_cells_beforeQC_ED       = md("**ED Cells**"),
+    ED_gain                     = md("**ED Gain**"),
+    ED_gain_pct                 = md("**% Gain**")
+  ) %>%
+  tab_spanner(
+    label   = md("**Input**"),
+    columns = c(pre_hyb_cell_count_total, cell_number_input_in_to_hyb)
+  ) %>%
+  tab_spanner(
+    label   = md("**Cell Recovery**"),
+    columns = c(num_cells_beforeQC_CR, num_cells_beforeQC_ED, ED_gain, ED_gain_pct)
+  ) %>%
+  data_color(
+    columns = num_cells_beforeQC_ED,
+    palette = "Blues"
+  ) %>%
+  data_color(
+    columns = num_cells_beforeQC_CR,
+    palette = "Greys"
+  ) %>%
+  data_color(
+    columns = ED_gain_pct,
+    palette = c("white", "#2CA02CFF")
+  ) %>%
+  # Highlight negative gains (ED recovered fewer cells than CR)
+  tab_style(
+    style     = cell_fill(color = "#D6272833"),
+    locations = cells_body(rows = ED_gain < 0)
+  ) %>%
+  tab_style(
+    style     = cell_text(weight = "bold"),
+    locations = cells_body(columns = orig.ident)
+  ) %>%
+  fmt_number(
+    columns  = c(pre_hyb_cell_count_total, cell_number_input_in_to_hyb,
+                 num_cells_beforeQC_CR, num_cells_beforeQC_ED, ED_gain),
+    decimals = 0,
+    use_seps = TRUE
+  ) %>%
+  fmt_number(
+    columns  = ED_gain_pct,
+    decimals = 2
+  ) %>%
+  grand_summary_rows(
+    columns = c(pre_hyb_cell_count_total, cell_number_input_in_to_hyb,
+                num_cells_beforeQC_CR, num_cells_beforeQC_ED, ED_gain),
+    fns     = list(Total ~ sum(.)),
+    fmt     = ~ fmt_number(., decimals = 0, use_seps = TRUE)
+  ) %>%
+  tab_footnote(
+    footnote  = "ED Gain = EmptyDrops cells minus CellRanger cells. Rows in red = ED recovered fewer cells than CR.",
+    locations = cells_column_labels(columns = ED_gain)
+  ) %>%
+  tab_options(
+    table.font.size                 = 13,
+    heading.title.font.size         = 16,
+    heading.subtitle.font.size      = 12,
+    column_labels.font.weight       = "bold",
+    table.border.top.color          = "black",
+    table.border.bottom.color       = "black",
+    row.striping.include_table_body = TRUE,
+    row.striping.background_color   = "#F9F9F9"
+  )
+
+library(gtExtras)
+gtsave(tb, filename = file.path(outDir, "Cellcounts_loaded_vs_captuted_per_sample_CR_vs_ED.html"))
 
 ```
 

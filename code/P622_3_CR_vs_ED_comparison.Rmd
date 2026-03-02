@@ -272,7 +272,7 @@ overlap_summary_table <- overlap_summary %>%
 
 
 library(gtExtras)
-gtsave_extra(overlap_summary_table, filename = file.path(outDir, "overlap_summary_table_per_sample_CR_vs_ED.html"))
+gtsave(overlap_summary_table, filename = file.path(outDir, "overlap_summary_table_per_sample_CR_vs_ED.html"))
 
 # library(flextable)
 # 

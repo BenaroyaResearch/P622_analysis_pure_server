@@ -226,6 +226,7 @@ for(n in 1:length(gexObjectsList)){
 
 P622_3_df_all_emptyDrops_out <- df_all
 # save(P622_3_df_all_emptyDrops_out, file = file.path(processedDataDir, "P622_3_emptyDrops_out_32_samples.rda"))
+load(file = file.path(processedDataDir, "P622_3_emptyDrops_out_32_samples.rda"))
 
 
 ```
@@ -235,7 +236,7 @@ P622_3_df_all_emptyDrops_out <- df_all
 ```{r Read the marker genes list}
 
 df_all_fdr001 <- P622_3_df_all_emptyDrops_out %>%
-  filter(FDR < 0.001) %>%
+  filter(FDR < 0.01) %>%
   group_by(sample_name, lower, retain, ignore, niters) %>%
   summarise(count = n(),
             median_UMI_count = median(Total),
@@ -244,7 +245,7 @@ df_all_fdr001 <- P622_3_df_all_emptyDrops_out %>%
   mutate(ignore = factor(ignore))
 
 tt <- df_all_fdr001 %>%
-  filter(lower == 100 & retain == 300)
+  filter(lower == 50 & retain == 200)
 
 sum(tt$count)
 
