@@ -726,6 +726,8 @@ pp <- DimPlot(seurat_obj_harmony_integrated_ED, reduction = "umap.harmony", grou
 
 # saveRDS(seurat_obj_harmony_integrated_ED, file = file.path(processedDataDir, "seurat_obj_harmony_integrated_ED_with_UMAP.rds"))
 
+seurat_obj_harmony_integrated_ED <- readRDS(file = file.path(processedDataDir, "seurat_obj_harmony_integrated_ED_with_UMAP.rds"))
+
 # marker genes
 cluster_markers_harmony_ED <- FindAllMarkers(seurat_obj_harmony_integrated_ED)
 # save(cluster_markers_harmony_ED, file = file.path(processedDataDir, "cluster_markers_harmony_integrated_ED_temp_260226.rda"))
@@ -998,6 +1000,122 @@ cell_metadata_ED <- seurat_obj_harmony_integrated_ED@meta.data %>%
 # save(cell_metadata_ED, file = file.path(processedDataDir, "cell_metadata_ED_temp_260226.rda"))
 
 ```
+
+
+&nbsp;
+
+### Read marker genes from P493
+
+```{r Normalization Integration and Clustering }
+ 
+filename_temp <- "/nfs/bioinformatics/workspace/ndonijayavelu/P493_3_analysis_server/output/EDout_results/data_for_others/P493_cluster_marker_genes.rds"
+P493_cluster_markers <- readRDS(file = filename_temp)
+
+# select top 200 genes for each cell type
+P493_top200_markers_per_celltype <- P493_cluster_markers %>%
+  filter(pct.1 > pct.2) %>%
+  filter(pct.1 > 0.1) %>%
+  arrange(cluster, p_val_adj, desc(avg_log2FC)) %>%
+  group_by(cell_type) %>%
+  slice_head(n = 200)
+
+# create a named list of signatures
+celltype_signatures <- P493_top200_markers_per_celltype %>%
+  group_by(cell_type) %>%
+  summarise(genes = list(gene)) %>%
+  deframe()
+
+
+library(AUCell)
+library(Seurat)
+
+# 1. Extract the expression matrix from your Seurat object
+expr_matrix <- GetAssayData(seurat_obj_harmony_integrated_ED, assay = "RNA", slot = "counts")  
+# AUCell prefers raw counts
+
+# 2. Build gene rankings (per cell)
+cell_rankings <- AUCell_buildRankings(expr_matrix, 
+                                       nCores = 4, 
+                                       plotStats = FALSE)
+
+# 3. Calculate AUC for each signature
+cell_AUC <- AUCell_calcAUC(celltype_signatures,    # your named list from before
+                            cell_rankings,
+                            aucMaxRank = ceiling(0.05 * nrow(cell_rankings)))
+# aucMaxRank: top 5% of genes is standard, can adjust to 0.05-0.10
+
+# 4. Extract AUC scores and add to Seurat metadata
+AUC_scores <- as.data.frame(t(getAUC(cell_AUC)))
+
+# save(AUC_scores, file = file.path(processedDataDir, "AUC_scores_for_P493_celltypes_harmony_integrated_ED_temp_260303.rda"))
+
+# Add AUC scores to metadata
+metadata <- seurat_obj_harmony_integrated_ED@meta.data %>%
+  rownames_to_column(var = "cellbc") %>%
+  inner_join(AUC_scores %>% rownames_to_column(var = "cellbc")) %>%
+  column_to_rownames(var = "cellbc")
+
+all(rownames(metadata) == rownames(seurat_obj_harmony_integrated_ED@meta.data))
+
+seurat_obj_harmony_integrated_ED@meta.data <- metadata
+
+FeaturePlot(seurat_obj_harmony_integrated_ED, reduction = "umap.harmony", features = names(celltype_signatures), 
+            min.cutoff = "q5", max.cutoff = "q95")
+
+VlnPlot(seurat_obj_harmony_integrated_ED, features = names(celltype_signatures))
+
+```
+
+
+&nbsp;
+
+### Visualize signature scores for every cluster
+
+```{r Normalization Integration and Clustering }
+
+# Pull relevant columns from metadata
+df <- seurat_obj_harmony_integrated_ED@meta.data[, c("harmony_clusters", names(celltype_signatures))]
+
+# Plot one violin per signature
+pp_plots <- lapply(names(celltype_signatures), function(sig) {
+  
+  ggplot(df, aes(x = harmony_clusters, y = .data[[sig]], fill = harmony_clusters)) +
+    geom_violin(trim = TRUE, scale = "width") +
+    stat_summary(fun = mean, geom = "crossbar",
+                 width = 0.3, fatten = 1.5, color = "black") +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+      legend.position = "none"
+    ) +
+    labs(x = NULL, y = "AUC Score", title = sig)
+})
+
+wrap_plots(pp_plots, ncol = 4)
+
+
+
+```
+
+
+&nbsp;
+
+### Normalization, Integration and Clustering 
+
+```{r Normalization Integration and Clustering }
+
+```
+
+
+
+&nbsp;
+
+### Normalization, Integration and Clustering 
+
+```{r Normalization Integration and Clustering }
+
+```
+
 
 
 
